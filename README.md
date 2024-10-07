@@ -1,2 +1,2 @@
-# aoc23 (Advent Of Code 2023)
-Hey! These are my solutions for advent of code 2023 in zig. Let's hope I get through them before advent of code 2024. (:
+# Advent Of Code 2023
+These are my solutions for [Advent Of Code 2023](https://adventofcode.com/2023) in zig. Let's hope I get through them before Advent Of Code 2024. (:
