@@ -7,24 +7,64 @@ pub fn main() !void {
 
     // try stdout.print("{s}", .{input});
     var sum: usize = 0;
-    const width = @as(isize, @intCast(find_width(input)));
+    const width = find_width(input);
     // try stdout.print("{d}", .{width});
     var i: usize = 0;
 
     while (i < input.len) : (i += 1) {
         switch (input[i]) {
-            '0'...'9' => if (search_symbol(input, i, width)) {
-                const number = search_number(input, i);
-                const value = try std.fmt.parseInt(usize, input[number.start..number.end], 10);
-                sum += value;
-                i = number.end;
-                // try stdout.print("[{d}..{d}] = {} i={d}; ", .{ number.start, number.end, value, i });
+            '*' => {
+                var adjacent: usize = 0;
+                var product: usize = 1;
+                if (is_number(input, i - 1)) {
+                    adjacent += 1;
+                    product *= search_value(input, i - 1);
+                }
+                if (is_number(input, i + 1)) {
+                    adjacent += 1;
+                    product *= search_value(input, i + 1);
+                }
+                // Search top 3 spots
+                var j: usize = 0;
+                if (i > width) {
+                    while (j <= 2) : (j += 1) {
+                        if (is_number(input, i - width - 1 + j)) {
+                            adjacent += 1;
+                            const number = search_number(input, i - width - 1 + j);
+                            j = number.end - (i - width - 1) - 1;
+                            product *= parse_number(input, number);
+                        }
+                    }
+                }
+                // Search bottom 3 spots
+                if (i + width < input.len) {
+                    j = 0;
+                    while (j <= 2) : (j += 1) {
+                        if (is_number(input, i + width - 1 + j)) {
+                            adjacent += 1;
+                            const number = search_number(input, i + width - 1 + j);
+                            j = number.end - (i + width - 1) - 1;
+                            product *= parse_number(input, number);
+                        }
+                    }
+                }
+
+                if (adjacent == 2) {
+                    sum += product;
+                }
             },
             else => {},
         }
     }
 
     try stdout.print("Day " ++ day ++ " -> {d}\n", .{sum});
+}
+
+fn is_number(input: []const u8, index: usize) bool {
+    return switch (input[index]) {
+        '0'...'9' => true,
+        else => false,
+    };
 }
 
 fn search_symbol(input: []const u8, index: usize, width: isize) bool {
@@ -48,6 +88,16 @@ fn is_symbol(input: []const u8, index: usize, offset: isize) bool {
         '\n', '.', '0'...'9' => false,
         else => true,
     };
+}
+
+fn parse_number(input: []const u8, number: anytype) usize {
+    const value = std.fmt.parseInt(usize, input[number.start..number.end], 10) catch 0;
+    return value;
+}
+
+fn search_value(input: []const u8, index: usize) usize {
+    const number = search_number(input, index);
+    return parse_number(input, number);
 }
 
 fn search_number(input: []const u8, index: usize) struct { start: usize, end: usize } {
