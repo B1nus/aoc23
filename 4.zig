@@ -5,13 +5,17 @@ pub fn main() !void {
     const input = @embedFile(day ++ ".txt");
     var sum: usize = 0;
 
-    var nums: [10]usize = std.mem.zeroes([10]usize);
+    var nums = [_]usize{0} ** 10;
+    var copies = [_]usize{1} ** 197;
+    var matches_l = [_]usize{0} ** 197;
     var left = true;
     var i: usize = 10;
     var num: usize = 0;
     var num_i: usize = 0;
+    var line_i: usize = 0;
     var matches: usize = 0;
 
+    // First pass
     while (i < input.len) {
         switch (input[i]) {
             '0'...'9' => {
@@ -42,11 +46,17 @@ pub fn main() !void {
             },
             '\n' => {
                 if (matches > 0) {
-                    sum += try std.math.powi(usize, 2, matches - 1);
+                    matches_l[line_i] = matches;
+                    for (1..matches + 1) |j| {
+                        const instances = copies[line_i];
+                        copies[line_i + j] += instances;
+                    }
                 }
+                sum += copies[line_i];
                 matches = 0;
                 left = true;
                 num_i = 0;
+                line_i += 1;
                 i += 10;
             },
             else => {
@@ -56,5 +66,5 @@ pub fn main() !void {
         }
     }
 
-    std.debug.print("Day " ++ day ++ " > {d}\n", .{sum});
+    std.debug.print("Day " ++ day ++ " >> {d}\n", .{sum});
 }
