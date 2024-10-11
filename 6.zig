@@ -8,8 +8,8 @@ pub fn dbg(any: anytype) void {
 pub fn main() !void {
     const day = @src().file[0..1];
     var product: usize = 1;
-    const times = [_]usize{ 48, 93, 85, 95 };
-    const distances = [_]usize{ 296, 1928, 1236, 1391 };
+    const times = [_]usize{48938595};
+    const distances = [_]usize{296192812361391};
 
     for (times, distances) |t, d| {
         var ways: usize = 0;
