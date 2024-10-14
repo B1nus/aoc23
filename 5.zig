@@ -1,6 +1,6 @@
 const std = @import("std");
 const stdout = std.io.getStdOut().writer();
-var buffer: [8 * 20]u8 = undefined;
+var buffer: [1000]u8 = undefined;
 var fba = std.heap.FixedBufferAllocator.init(&buffer);
 const allocator = fba.allocator();
 
@@ -11,6 +11,7 @@ pub fn main() !void {
 
     var lines = std.mem.splitScalar(u8, input, '\n');
     var seeds = std.ArrayList(usize).init(allocator);
+    var seed_stop = std.ArrayList(bool).init(allocator);
 
     while (lines.next()) |line| {
         if (line.len == 0) continue;
@@ -18,9 +19,8 @@ pub fn main() !void {
             var seed_iter = std.mem.splitScalar(u8, line[7..], ' ');
             while (seed_iter.next()) |seed| {
                 try seeds.append(try std.fmt.parseInt(usize, seed, 10));
-                std.debug.print("{d} ", .{seeds.getLast()});
+                try seed_stop.append(false);
             }
-            std.debug.print("\n", .{});
         }
         switch (line[0]) {
             '0'...'9' => {
@@ -28,17 +28,19 @@ pub fn main() !void {
                 const dest_range_start = try std.fmt.parseInt(usize, maping.next().?, 10);
                 const source_range_start = try std.fmt.parseInt(usize, maping.next().?, 10);
                 const range_length = try std.fmt.parseInt(usize, maping.next().?, 10);
-                std.debug.print("de: {d} so: {d} le: {d}... ", .{ dest_range_start, source_range_start, range_length });
-                for (seeds.items) |*seed| {
-                    if (seed.* >= source_range_start and seed.* < source_range_start + range_length) {
-                        std.debug.print("{d} -> {d}  ", .{ seed.*, (seed.* + dest_range_start) - source_range_start });
+                for (seeds.items, seed_stop.items) |*seed, *stop| {
+                    if (!stop.* and seed.* >= source_range_start and seed.* < source_range_start + range_length) {
                         seed.* += dest_range_start;
                         seed.* -= source_range_start;
+                        stop.* = true;
                     }
                 }
-                std.debug.print("\n", .{});
             },
-            else => continue,
+            else => {
+                for (seed_stop.items) |*stop| {
+                    stop.* = false;
+                }
+            },
         }
     }
 
