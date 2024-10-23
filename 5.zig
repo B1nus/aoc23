@@ -110,11 +110,14 @@ pub fn convert_ranges(ranges: *std.ArrayList(range), conversions: *const []conve
 
         for (seeds) |seed| {
             const overlap_nonlap = try seed.overlap_and_nonlap(&converter.source_range, allocator);
+            std.debug.print("range: {any} converter: {any} overlap: {any} nonlap: {any}\n", .{ seed, converter.source_range, overlap_nonlap.overlap.items, overlap_nonlap.nonlap.items });
 
             try ranges.appendSlice(overlap_nonlap.nonlap.items);
 
             if (overlap_nonlap.overlap.capacity > 0) {
-                try output.append(overlap_nonlap.overlap.items[0]);
+                var overlap_range = overlap_nonlap.overlap.items[0];
+                converter.convert_range(&overlap_range);
+                try output.append(overlap_range);
             }
         }
     }
@@ -131,7 +134,7 @@ pub fn main() !void {
 
     var paragraphs = std.mem.splitSequence(u8, input, ":\n");
 
-    // skip seed range line
+    // Skip first paragraph with the intial seed ranges
     _ = paragraphs.next();
 
     var seed_ranges = std.ArrayList(range).init(allocator);
@@ -151,8 +154,10 @@ pub fn main() !void {
         defer conversions.deinit();
 
         const new_seeds = try convert_ranges(&seed_ranges, &conversions.items, allocator);
-        seed_ranges.clearAndFree();
+        // std.debug.print("new: {any}\n", .{new_seeds.items});
+        std.debug.print("not changed: {any}\n\n", .{new_seeds.items});
         try seed_ranges.appendSlice(new_seeds.items);
+        // std.debug.print("converted ranges: {any}", .{seed_ranges})
     }
 
     for (seed_ranges.items) |seed_range| {
@@ -200,4 +205,10 @@ test "all at once" {
     try expect(self.backlap(&other).?.length == 4);
     try expect(self.frontlap(&other).?.start == 19);
     try expect(self.frontlap(&other).?.length == 1);
+
+    const overlap_and_nonlap = try self.overlap_and_nonlap(&other, std.testing.allocator);
+    defer overlap_and_nonlap.overlap.deinit();
+    defer overlap_and_nonlap.nonlap.deinit();
+    try expect(overlap_and_nonlap.overlap.items[0].start == 14);
+    try expect(overlap_and_nonlap.nonlap.items.len == 2);
 }
