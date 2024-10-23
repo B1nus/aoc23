@@ -1,17 +1,34 @@
 const std = @import("std");
 const stdout = std.io.getStdOut().writer();
-var buffer: [10000]u8 = undefined;
+var buffer: [1000]u8 = undefined;
 
 const range = struct {
     start: usize,
     length: usize,
 
     fn from_start_end(start: usize, _end: usize) ?range {
-        if (start < _end) {
+        if (start > _end) {
             return null;
         } else {
             return range{ .start = start, .length = _end - start + 1 };
         }
+    }
+
+    pub fn overlap_and_nonlap(self: range, other: *const range, allocator: std.mem.Allocator) !struct { overlap: std.ArrayList(range), nonlap: std.ArrayList(range) } {
+        var lap = std.ArrayList(range).init(allocator);
+        var nonlap = std.ArrayList(range).init(allocator);
+
+        if (self.overlap(other)) |r| {
+            try lap.append(r);
+        }
+        if (self.backlap(other)) |r| {
+            try nonlap.append(r);
+        }
+        if (self.frontlap(other)) |r| {
+            try nonlap.append(r);
+        }
+
+        return .{ .overlap = lap, .nonlap = nonlap };
     }
 
     fn overlap(self: range, other: *const range) ?range {
@@ -24,7 +41,7 @@ const range = struct {
 
     fn backlap(self: range, other: *const range) ?range {
         if (self.start < other.start) {
-            return range.from_start_end(self.start, other.start - 1);
+            return range.from_start_end(self.start, @min(other.start - 1, self.end()));
         } else {
             return null;
         }
@@ -32,14 +49,19 @@ const range = struct {
 
     fn frontlap(self: range, other: *const range) ?range {
         if (self.end() > other.end()) {
-            return range.from_start_end(other.end(), self.end());
+            return range.from_start_end(@max(other.end() + 1, self.start), self.end());
         } else {
             return null;
         }
     }
 
     fn end(self: range) usize {
+        // std.debug.print("{d} + {d} - {d}", .{ self.start, self.length, -1 });
         return self.start + self.length - 1;
+    }
+
+    fn dbg(self: range, comptime prepend: []const u8, comptime append: []const u8) void {
+        std.debug.print(prepend ++ "[{d}..{d}]" ++ append, .{ self.start, self.end() });
     }
 };
 
@@ -57,7 +79,6 @@ const conversion = struct {
         var lines = std.mem.splitScalar(u8, paragraph, '\n');
 
         while (lines.next()) |line| {
-            // std.debug.print("reading conversion line: {s}\n", .{line});
             if (line.len == 0 or line[0] < 48 or line[0] > 57) break;
             var numbers = std.mem.splitScalar(u8, line, ' ');
 
@@ -65,32 +86,56 @@ const conversion = struct {
             const source_start = try std.fmt.parseInt(usize, numbers.next().?, 10);
             const length = try std.fmt.parseInt(usize, numbers.next().?, 10);
 
-            // std.debug.print("got conversion: {d} {d} {d}\n", .{ destination_start, source_start, length });
-
-            try conversions.append(conversion{
+            const conversion_ = conversion{
                 .source_range = range{
                     .start = source_start,
                     .length = length,
                 },
                 .destination_start = destination_start,
-            });
-        }
+            };
 
-        // std.debug.print("parse_paragraph = {any}\n", .{conversions.items});
+            try conversions.append(conversion_);
+        }
 
         return conversions;
     }
 };
 
+pub fn convert_ranges(ranges: *std.ArrayList(range), conversions: *const []conversion, allocator: std.mem.Allocator) !std.ArrayList(range) {
+    var output = std.ArrayList(range).init(allocator);
+
+    for (conversions.*) |converter| {
+        const seeds = try ranges.toOwnedSlice();
+        ranges.clearAndFree();
+
+        for (seeds) |seed| {
+            const overlap_nonlap = try seed.overlap_and_nonlap(&converter.source_range, allocator);
+
+            try ranges.appendSlice(overlap_nonlap.nonlap.items);
+
+            if (overlap_nonlap.overlap.capacity > 0) {
+                try output.append(overlap_nonlap.overlap.items[0]);
+            }
+        }
+    }
+
+    return output;
+}
+
 pub fn main() !void {
-    var fba = std.heap.FixedBufferAllocator.init(&buffer);
+    var fba = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = fba.allocator();
     const day = @src().file[0..1];
     const input = @embedFile(day ++ ".txt");
     var min: usize = undefined;
 
     var paragraphs = std.mem.splitSequence(u8, input, ":\n");
+
+    // skip seed range line
+    _ = paragraphs.next();
+
     var seed_ranges = std.ArrayList(range).init(allocator);
+    defer seed_ranges.deinit();
 
     var lines = std.mem.splitScalar(u8, input, '\n');
     const seed_ranges_line = lines.next().?[7..];
@@ -101,52 +146,13 @@ pub fn main() !void {
         try seed_ranges.append(range{ .start = start, .length = length });
     }
 
-    // std.debug.print("seeds:\n", .{});
-    // for (seed_ranges.items) |seed_range| std.debug.print("\t{!}\n", .{seed_range});
-
     while (paragraphs.next()) |paragraph| {
         const conversions = try conversion.parse_paragraph(paragraph, allocator);
-        var next_seed_ranges = std.ArrayList(range).init(allocator);
-        var potential_seed_ranges = std.ArrayList(range).init(allocator);
-        for (seed_ranges.items) |seed_range| {
-            std.debug.print("converting seed {!}\n", .{seed_range});
-            for (conversions.items) |_conversion| {
-                std.debug.print("on conversion {!}\n", .{_conversion});
-                var i: usize = 0;
-                while (i < potential_seed_ranges.capacity) : (i += 1) {
-                    var remove: bool = false;
-                    const potential_seed_range = potential_seed_ranges.items[i];
-                    if (potential_seed_range.overlap(&_conversion.source_range)) |overlap_range| {
-                        try next_seed_ranges.append(overlap_range);
-                        remove = true;
-                    }
-                    if (potential_seed_range.backlap(&_conversion.source_range)) |backlap_range| {
-                        try potential_seed_ranges.append(backlap_range);
-                        remove = true;
-                    }
-                    if (potential_seed_range.frontlap(&_conversion.source_range)) |frontlap_range| {
-                        try potential_seed_ranges.append(frontlap_range);
-                        remove = true;
-                    }
-                    if (remove) {
-                        _ = potential_seed_ranges.orderedRemove(i);
-                        i -= 1;
-                    }
-                }
-                if (seed_range.overlap(&_conversion.source_range)) |overlap_range| {
-                    try next_seed_ranges.append(overlap_range);
-                }
-                if (seed_range.backlap(&_conversion.source_range)) |backlap_range| {
-                    try potential_seed_ranges.append(backlap_range);
-                }
-                if (seed_range.frontlap(&_conversion.source_range)) |frontlap_range| {
-                    try potential_seed_ranges.append(frontlap_range);
-                }
-            }
-        }
-        std.debug.print("next_seed_ranges:\n", .{});
-        for (next_seed_ranges.items) |range_| std.debug.print("\t{!}\n", .{range_});
-        seed_ranges = next_seed_ranges;
+        defer conversions.deinit();
+
+        const new_seeds = try convert_ranges(&seed_ranges, &conversions.items, allocator);
+        seed_ranges.clearAndFree();
+        try seed_ranges.appendSlice(new_seeds.items);
     }
 
     for (seed_ranges.items) |seed_range| {
@@ -156,4 +162,42 @@ pub fn main() !void {
     }
 
     std.debug.print("Day " ++ day ++ " -> {d}\n", .{min});
+}
+
+const expect = std.testing.expect;
+
+test "total backlap" {
+    const self = range{ .start = 5, .length = 5 };
+    const other = range{ .start = 12, .length = 2 };
+
+    try expect(self.backlap(&other).?.start == self.start);
+    try expect(self.backlap(&other).?.length == self.length);
+}
+
+test "total frontlap" {
+    const self = range{ .start = 12, .length = 2 };
+    const other = range{ .start = 5, .length = 5 };
+
+    try expect(self.frontlap(&other).?.start == self.start);
+    try expect(self.frontlap(&other).?.length == self.length);
+}
+
+test "overlap and backlap" {
+    const self = range{ .start = 0, .length = 5 };
+    const other = range{ .start = 2, .length = 4 };
+    try expect(self.overlap(&other).?.start == 2);
+    try expect(self.overlap(&other).?.length == 3);
+    try expect(self.backlap(&other).?.start == 0);
+    try expect(self.backlap(&other).?.length == 2);
+}
+
+test "all at once" {
+    const self = range{ .start = 10, .length = 10 };
+    const other = range{ .start = 14, .length = 5 };
+    try expect(self.overlap(&other).?.start == 14);
+    try expect(self.overlap(&other).?.length == 5);
+    try expect(self.backlap(&other).?.start == 10);
+    try expect(self.backlap(&other).?.length == 4);
+    try expect(self.frontlap(&other).?.start == 19);
+    try expect(self.frontlap(&other).?.length == 1);
 }
