@@ -27,16 +27,16 @@ pub fn main() !void {
 }
 
 pub fn predict(numbers: []isize, allocator: std.mem.Allocator) isize {
-    var last_nums = std.ArrayList(isize).init(allocator);
+    var first_nums = std.ArrayList(isize).init(allocator);
     var cur_nums = std.ArrayList(isize).init(allocator);
-    defer last_nums.deinit();
+    defer first_nums.deinit();
     defer cur_nums.deinit();
     cur_nums.appendSlice(numbers) catch {};
     var is_zero = false;
 
     while (!is_zero) {
         is_zero = true;
-        last_nums.append(cur_nums.getLast()) catch {};
+        first_nums.append(cur_nums.items[0]) catch {};
         for (0..cur_nums.items.len - 1) |i| {
             cur_nums.items[i] = cur_nums.items[i + 1] - cur_nums.items[i];
             if (cur_nums.items[i] != 0) {
@@ -47,8 +47,8 @@ pub fn predict(numbers: []isize, allocator: std.mem.Allocator) isize {
     }
 
     var prediction: isize = 0;
-    for (0..last_nums.items.len) |_| {
-        prediction += last_nums.pop();
+    for (0..first_nums.items.len) |_| {
+        prediction = first_nums.pop() - prediction;
     }
 
     return prediction;
