@@ -26,19 +26,167 @@ pub fn main() !void {
         try starts.append(start + width);
     }
 
-    // Initialising distance array
+    // Initialize and free tiles array
+    var tiles = try pa.alloc(Tile, input.len);
+    defer pa.free(tiles);
+    for (tiles) |*tile| {
+        tile.* = Tile.Junk;
+    }
+
     var turtle1 = Turtle.from_diff(start, starts.items[0]);
     var turtle2 = Turtle.from_diff(start, starts.items[1]);
+    tiles[start] = Tile.Loop;
+    tiles[turtle1.pos] = Tile.Loop;
+    tiles[turtle2.pos] = Tile.Loop;
     var steps: usize = 1;
 
     // I assume the loop cannot be an even number of steps long. If that assumption is wrong, this can be an infinite loop.
     while (turtle1.pos != turtle2.pos) : (steps += 1) {
         turtle1.move(input[turtle1.pos], width);
         turtle2.move(input[turtle2.pos], width);
+        tiles[turtle1.pos] = Tile.Loop;
+        tiles[turtle2.pos] = Tile.Loop;
+    }
+
+    // Looping because I don't have the braincells to do this the smart way.
+    for (0..width) |_| {
+        for (0..width - 1) |x| {
+            for (0..width - 1) |y| {
+                collapse_tile(input, &tiles, width, x + y * width);
+            }
+        }
+        for (0..width - 1) |x| {
+            for (0..width - 1) |y| {
+                collapse_tile(input, &tiles, width, x * width + y);
+            }
+        }
+        for (0..width - 1) |x| {
+            for (0..width - 1) |y| {
+                collapse_tile(input, &tiles, width, x * width + width - 2 - y);
+            }
+        }
+        for (0..width - 1) |x| {
+            for (0..width - 1) |y| {
+                collapse_tile(input, &tiles, width, input.len - 2 - x - y * width);
+            }
+        }
+    }
+
+    for (tiles) |*tile| {
+        if (tile.* == Tile.Junk) {
+            tile.* = Tile.Inside;
+        }
+    }
+
+    for (input, tiles) |c, t| {
+        if (c == '\n') {
+            print("\n", .{});
+        } else {
+            switch (t) {
+                Tile.Loop => print("\x1b[1m{c}\x1b[0m", .{c}),
+                Tile.Junk => print(" ", .{}),
+                Tile.Outside => print("\x1b[31mO\x1b[0m", .{}),
+                Tile.Inside => print("\x1b[32mI\x1b[0m", .{}),
+                else => print("\x1b[33m{c}\x1b[0m", .{c}),
+            }
+        }
     }
 
     print("Day " ++ day ++ " >> {d}\n", .{steps});
 }
+
+pub fn get_tile_val(input: []const u8, tiles: []Tile, width: usize, index: usize) Tile {
+    if (tiles[index] == Tile.Junk) {
+        if (index < width or
+            index + width > input.len or
+            index % width == 139 or
+            index % width == 0 or
+            tiles[index + 1] == Tile.Outside or
+            tiles[index + 1 + width] == Tile.Outside or
+            tiles[index + width] == Tile.Outside or
+            tiles[index + width - 1] == Tile.Outside or
+            tiles[index - 1] == Tile.Outside or
+            tiles[index - 1 - width] == Tile.Outside or
+            tiles[index - width] == Tile.Outside or
+            tiles[index - width + 1] == Tile.Outside)
+        {
+            return Tile.Outside;
+        }
+
+        return tiles[index];
+    } else if (tiles[index] == Tile.Loop) {
+        if (index + width > input.len - 2 or tiles[index + width] == Tile.Outside) {
+            if (index < width or input[index] == '|' or input[index])
+        }
+        // if ((index + width > input.len - 1 or tiles[index + width] == Tile.Outside or (tiles[index + width] == Tile.Squeeze and (input[index + width] == '|' or input[index + width] == 'L' or input[index + width] == 'F'))) and
+        //     (index < width or input[index] == 'L' or input[index] == '|' or input[index] == 'F'))
+        // {
+        //     return Tile.Squeeze;
+        // }
+        //
+        // if ((index < width or tiles[index - width] == Tile.Outside or (tiles[index - width] == Tile.Squeeze and (input[index - width] == '|' or input[index - width] == 'L' or input[index - width] == 'F'))) and
+        //     (index + width > input.len - 1 or input[index] == 'L' or input[index] == '|' or input[index] == 'F'))
+        // {
+        //     return Tile.Squeeze;
+        // }
+        //
+        // if ((index % width == 0 or tiles[index - 1] == Tile.Outside or (tiles[index - 1] == Tile.Squeeze and (input[index - 1] == '-' or input[index - 1] == 'F' or input[index - 1] == '7'))) and
+        //     (index % width == 139 or input[index] == '-' or input[index] == '7' or input[index] == 'F'))
+        // {
+        //     return Tile.Squeeze;
+        // }
+        //
+        // if ((index % width == 139 or tiles[index + 1] == Tile.Outside or (tiles[index + 1] == Tile.Squeeze and (input[index + 1] == '-' or input[index + 1] == 'F' or input[index + 1] == '7'))) and
+        //     (index % width == 0 or input[index] == '-' or input[index] == '7' or input[index] == 'F'))
+        // {
+        //     return Tile.Squeeze;
+        // }
+        //
+        // if ((index % width == 139 or tiles[index + 1] == Tile.Outside or (tiles[index + 1] == Tile.Squeeze and (input[index + 1] == '-' or input[index + 1] == 'J' or input[index + 1] == 'L'))) and
+        //     (index % width == 0 or input[index] == '-' or input[index] == 'L' or input[index] == 'J'))
+        // {
+        //     return Tile.Squeeze;
+        // }
+        //
+        // if ((index % width == 0 or tiles[index - 1] == Tile.Outside or (tiles[index - 1] == Tile.Squeeze and (input[index - 1] == '-' or input[index - 1] == 'J' or input[index - 1] == 'L'))) and
+        //     (index % width == 139 or input[index] == '-' or input[index] == 'L' or input[index] == 'J'))
+        // {
+        //     return Tile.Squeeze;
+        // }
+        //
+        // if ((index < width or tiles[index - width] == Tile.Outside or (tiles[index - width] == Tile.Squeeze and (input[index - width] == 'J' or input[index - width] == '|' or input[index - width] == '7'))) and (index + width > input.len - 1 or input[index] == '|' or input[index] == '7' or input[index] == 'J')) {
+        //     return Tile.Squeeze;
+        // }
+        //
+        // if ((index + width > input.len - 1 or tiles[index + width] == Tile.Outside or (tiles[index + width] == Tile.Squeeze and (input[index + width] == 'J' or input[index + width] == '|' or input[index + width] == '7'))) and
+        //     (index < width or input[index] == '|' or input[index] == '7' or input[index] == 'J'))
+        // {
+        //     return Tile.Squeeze;
+        // }
+    }
+
+    return tiles[index];
+}
+
+pub fn collapse_tile(input: []const u8, tiles: *[]Tile, width: usize, index: usize) void {
+    const tile = get_tile_val(input, tiles.*, width, index);
+    tiles.*[index] = tile;
+}
+
+const Tile = union(enum) {
+    Junk,
+    Loop,
+    Squeeze: Squeezable,
+    Inside,
+    Outside,
+};
+
+const Squeezable = struct {
+    Right: bool,
+    Left: bool,
+    Up: bool,
+    Down: bool,
+};
 
 const Turtle = struct {
     pos: usize,
