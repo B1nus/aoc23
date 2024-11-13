@@ -6,135 +6,129 @@ pub fn main() !void {
     const input = @embedFile(day ++ ".txt");
     const allocator = std.heap.page_allocator;
 
-    var universe = try expand_height(input, allocator);
-    var width = std.mem.indexOfScalar(u8, input, '\n').?;
-    const height = universe.items.len / width;
-    expand_width(&universe, width);
-    width = universe.items.len / height;
-    const galaxies = galaxy_indicies(universe.items, allocator);
-
-    var sum: usize = 0;
-    for (galaxies.items[0 .. galaxies.items.len - 1], 0..) |galaxy, i| {
-        for (galaxies.items[i + 1 ..]) |other| {
-            sum += distance(galaxy, other, width);
-        }
-    }
+    var universe = try Universe.from_text(input, allocator);
+    try universe.calculate_expansions(allocator);
+    const galaxies = try universe.galaxy_indicies(allocator);
+    // universe.print_universe();
+    const sum = universe.distance_sum(galaxies, 1000000);
 
     print("Day " ++ day ++ " >> {d}\n", .{sum});
 }
 
-pub fn galaxy_indicies(universe: []const u8, allocator: std.mem.Allocator) std.ArrayList(usize) {
-    var galaxies = std.ArrayList(usize).init(allocator);
-    for (universe, 0..) |c, i| {
-        if (c == '#') {
-            galaxies.append(i) catch {};
+const Universe = struct {
+    universe: []const u8,
+    width: usize,
+    height: usize,
+    expanded_rows: []usize,
+    expanded_columns: []usize,
+
+    pub fn from_text(universe_text: []const u8, allocator: std.mem.Allocator) !Universe {
+        const width = std.mem.indexOfScalar(u8, universe_text, '\n').?;
+
+        // Remove newlines
+        var lines = std.mem.splitScalar(u8, universe_text, '\n');
+        var universe = std.ArrayList(u8).init(allocator);
+        while (lines.next()) |line| {
+            if (line.len != 0) {
+                try universe.appendSlice(line);
+            }
+        }
+
+        return Universe{
+            .universe = universe.items,
+            .width = width,
+            .height = universe.items.len / width,
+            .expanded_rows = undefined,
+            .expanded_columns = undefined,
+        };
+    }
+
+    pub fn calculate_expansions(self: *Universe, allocator: std.mem.Allocator) !void {
+        var expanded_rows = std.ArrayList(usize).init(allocator);
+        rows: for (0..self.height) |y| {
+            for (0..self.width) |x| {
+                if (self.universe[x + y * self.width] == '#') {
+                    continue :rows;
+                }
+            }
+            try expanded_rows.append(y);
+        }
+
+        var expanded_cols = std.ArrayList(usize).init(allocator);
+        cols: for (0..self.width) |x| {
+            for (0..self.height) |y| {
+                if (self.universe[x + y * self.width] == '#') {
+                    continue :cols;
+                }
+            }
+            try expanded_cols.append(x);
+        }
+        self.expanded_rows = expanded_rows.items;
+        self.expanded_columns = expanded_cols.items;
+    }
+
+    pub fn galaxy_indicies(self: Universe, allocator: std.mem.Allocator) ![]usize {
+        var galaxies = std.ArrayList(usize).init(allocator);
+        for (self.universe, 0..) |c, i| {
+            if (c == '#') {
+                try galaxies.append(i);
+            }
+        }
+        return galaxies.items;
+    }
+
+    pub fn distance_sum(self: Universe, galaxies: []usize, expansion: usize) usize {
+        var sum: usize = 0;
+        for (galaxies[0 .. galaxies.len - 1], 0..) |galaxy, i| {
+            for (galaxies[i + 1 ..]) |other| {
+                sum += self.distance(galaxy, other, expansion);
+            }
+        }
+        return sum;
+    }
+
+    pub fn distance(self: Universe, index1: usize, index2: usize, expansion: usize) usize {
+        const y1 = index1 / self.width;
+        const x1 = index1 % self.width;
+        const y2 = index2 / self.width;
+        const x2 = index2 % self.width;
+
+        var dx = posDiff(x1, x2);
+        var dy = posDiff(y1, y2);
+
+        for (self.expanded_rows) |row_index| {
+            if (row_index > @min(y1, y2) and row_index < @max(y1, y2)) {
+                dy += expansion - 1;
+            }
+        }
+
+        for (self.expanded_columns) |col_index| {
+            if (col_index > @min(x1, x2) and col_index < @max(x1, x2)) {
+                dx += expansion - 1;
+            }
+        }
+
+        return dx + dy;
+    }
+
+    // For debugging
+    pub fn print_universe(self: Universe) void {
+        print("width={d} height={d}\n", .{ self.width, self.height });
+        for (0..self.height) |y| {
+            for (0..self.width) |x| {
+                if (std.mem.count(usize, self.expanded_rows, &.{y}) == 1) {
+                    print("\x1b[31m-\x1b[0m", .{});
+                } else if (std.mem.count(usize, self.expanded_columns, &.{x}) == 1) {
+                    print("\x1b[31m|\x1b[0m", .{});
+                } else {
+                    print("{c}", .{self.universe[x + y * self.width]});
+                }
+            }
+            print("\n", .{});
         }
     }
-    return galaxies;
-}
-
-pub fn expand_height(universe: []const u8, allocator: std.mem.Allocator) !std.ArrayList(u8) {
-    var expanded = try std.ArrayList(u8).initCapacity(allocator, 100 * 1000000);
-    var lines = std.mem.splitScalar(u8, universe, '\n');
-    var height: usize = 0;
-    var width: usize = 0;
-    while (lines.next()) |line| {
-        expanded.appendSlice(line) catch {};
-        height += 1;
-        if (std.mem.indexOfScalar(u8, line, '#') == null) {
-            width = line.len;
-            expanded.appendSlice(line) catch {};
-            height += 1;
-        }
-    }
-    return expanded;
-}
-
-pub fn expand_width(expanded: *std.ArrayList(u8), width: usize) void {
-    const height = expanded.items.len / width;
-    columns: for (0..width) |x_| {
-        const x = width - x_ - 1;
-        const width_ = expanded.items.len / height;
-        for (0..height) |y| {
-            if (expanded.items[x + y * width_] == '#') continue :columns;
-        }
-        for (0..height) |y_| {
-            const y = height - y_ - 1;
-            expanded.insert(x + y * width_, '.') catch {};
-        }
-    }
-}
-
-// For debugging
-pub fn print_universe(universe: []const u8, width: usize, name: []const u8) void {
-    const height = universe.len / width;
-    print("{s}: width={d} height={d}\n", .{ name, width, height });
-    for (0..height) |h| {
-        for (0..width) |x| {
-            print("{c}", .{universe[x + h * width]});
-        }
-        print("\n", .{});
-    }
-}
-
-pub fn distance(index1: usize, index2: usize, width: usize) usize {
-    const y1 = index1 / width;
-    const x1 = index1 % width;
-    const y2 = index2 / width;
-    const x2 = index2 % width;
-
-    return posDiff(x1, x2) + posDiff(y1, y2);
-}
+};
 
 pub fn posDiff(a: usize, b: usize) usize {
     return if (a > b) a - b else b - a;
-}
-
-const expect = std.testing.expect;
-const test_allocator = std.testing.allocator;
-
-test "distance" {
-    try expect(distance(2, 76, 14) == 9);
-    try expect(distance(4, 23, 14) == 6);
-}
-
-test "galaxies" {
-    const universe =
-        \\....#........
-        \\.........#...
-        \\#............
-        \\.............
-        \\.............
-        \\........#....
-        \\.#...........
-        \\............#
-        \\.............
-    ;
-
-    const result = galaxy_indicies(universe, test_allocator);
-    defer result.deinit();
-
-    try expect(std.mem.eql(usize, result.items, &.{ 4, 23, 28, 78, 85, 110 }));
-}
-
-test "expand" {
-    const universe =
-        \\...#......
-        \\.......#..
-        \\#.........
-        \\..........
-        \\......#...
-        \\.#........
-        \\.........#
-        \\..........
-        \\.......#..
-        \\#...#.....
-    ;
-    const expanded = "....#.................#...#..............................................#.....#.......................#...................................#...#....#.......";
-
-    var result = try expand_height(universe, test_allocator);
-    expand_width(&result, 10);
-    defer result.deinit();
-
-    try expect(std.mem.eql(u8, result.items, expanded));
 }
