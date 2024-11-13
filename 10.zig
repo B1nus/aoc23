@@ -4,189 +4,241 @@ const print = std.debug.print;
 pub fn main() !void {
     const day = @src().file[0..2];
     const input = @embedFile(day ++ ".txt");
-    const pa = std.heap.page_allocator;
+    const allocator = std.heap.page_allocator;
 
-    // Find width
-    var lines = std.mem.splitScalar(u8, input, '\n');
-    const width = lines.next().?.len + 1; // Adding one because of the newline
+    const grid = try Grid.from_input(input, allocator);
+    grid.find_loop();
+    grid.find_open();
+    const enclosed_area = grid.find_enclosed();
+    grid.print_grid();
 
-    const start = std.mem.indexOfScalar(u8, input, 'S').?;
-    var starts = try std.ArrayList(usize).initCapacity(pa, 2);
-    // I know the start is not on a edge, so I'm skipping a few checks
-    if (input[start + 1] != '.') {
-        try starts.append(start + 1);
-    }
-    if (input[start - 1] != '.') {
-        try starts.append(start - 1);
-    }
-    if (input[start - width] != '.') {
-        try starts.append(start - width);
-    }
-    if (input[start + width] != '.') {
-        try starts.append(start + width);
-    }
+    print("Day " ++ day ++ " >> {d}\n", .{enclosed_area});
+}
 
-    // Initialize and free tiles array
-    var tiles = try pa.alloc(Tile, input.len);
-    defer pa.free(tiles);
-    for (tiles) |*tile| {
-        tile.* = Tile.Junk;
-    }
+const Grid = struct {
+    tiles: []Tile,
+    start: usize,
+    width: usize,
+    height: usize,
 
-    var turtle1 = Turtle.from_diff(start, starts.items[0]);
-    var turtle2 = Turtle.from_diff(start, starts.items[1]);
-    tiles[start] = Tile.Loop;
-    tiles[turtle1.pos] = Tile.Loop;
-    tiles[turtle2.pos] = Tile.Loop;
-    var steps: usize = 1;
+    pub fn from_input(input: []const u8, allocator: std.mem.Allocator) !Grid {
+        const width = std.mem.indexOfScalar(u8, input, '\n').?;
+        const height = (input.len + 1) / (width + 1);
 
-    // I assume the loop cannot be an even number of steps long. If that assumption is wrong, this can be an infinite loop.
-    while (turtle1.pos != turtle2.pos) : (steps += 1) {
-        turtle1.move(input[turtle1.pos], width);
-        turtle2.move(input[turtle2.pos], width);
-        tiles[turtle1.pos] = Tile.Loop;
-        tiles[turtle2.pos] = Tile.Loop;
-    }
-
-    // Looping because I don't have the braincells to do this the smart way.
-    for (0..width) |_| {
-        for (0..width - 1) |x| {
-            for (0..width - 1) |y| {
-                collapse_tile(input, &tiles, width, x + y * width);
+        var tiles = try allocator.alloc(Tile, width * height);
+        var i: usize = 0;
+        var start: usize = undefined;
+        for (input) |c| {
+            switch (c) {
+                '\n' => {},
+                else => {
+                    tiles[i] = Tile{ .unknown = c };
+                    if (c == 'S') start = i;
+                    i += 1;
+                },
             }
         }
-        for (0..width - 1) |x| {
-            for (0..width - 1) |y| {
-                collapse_tile(input, &tiles, width, x * width + y);
+
+        return Grid{
+            .tiles = tiles,
+            .start = start,
+            .width = width,
+            .height = height,
+        };
+    }
+
+    pub fn find_loop(self: Grid) void {
+        // Find starting pipe.
+        const next = for (0..4) |dir| {
+            const mask_: u4 = 0b0001;
+            const mask = mask_ << @intCast(dir);
+            const index = self.get_adjacent_index(self.start, mask).?;
+            if (!self.is_char(index, '.')) break index;
+        } else unreachable;
+        var turtle = Turtle.from_diff(self.start, next);
+        self.to_loop(turtle.pos);
+
+        while (turtle.pos != self.start) {
+            turtle.move(self.tiles[turtle.pos], self.width);
+            self.to_loop(turtle.pos);
+        }
+    }
+
+    pub fn find_enclosed(self: Grid) usize {
+        var enclosed_area: usize = 0;
+        for (self.tiles) |*t| {
+            switch (t.*) {
+                .loop => {},
+                .squeeze => {},
+                .outside => {},
+                .unknown => {
+                    t.* = Tile.inside;
+                    enclosed_area += 1;
+                },
+                else => unreachable,
             }
         }
-        for (0..width - 1) |x| {
-            for (0..width - 1) |y| {
-                collapse_tile(input, &tiles, width, x * width + width - 2 - y);
+        return enclosed_area;
+    }
+
+    pub fn find_open(self: Grid) void {
+        for (self.tiles) |*t| {
+            switch (t.*) {
+                .loop => {},
+                else => t.* = Tile.junk,
             }
         }
-        for (0..width - 1) |x| {
-            for (0..width - 1) |y| {
-                collapse_tile(input, &tiles, width, input.len - 2 - x - y * width);
+
+        for (0..@max(self.width, self.height)) |_| {
+            for (0..self.width * self.height) |i| {
+                self.collapse_tile(i);
             }
         }
     }
 
-    for (tiles) |*tile| {
-        if (tile.* == Tile.Junk) {
-            tile.* = Tile.Inside;
+    pub fn squeezable(self: Grid, index: usize, from_side: u4) bool {
+        return switch (self.tiles[index]) {
+            Tile.squeeze => |f| return f & from_side > 0,
+            else => false,
+        };
+    }
+
+    pub fn collapse_tile(self: Grid, index: usize) void {
+        switch (self.tiles[index]) {
+            .junk => if (self.adjacent(index, up) == Tile.outside or
+                self.adjacent(index, left) == Tile.outside or
+                self.adjacent(index, down) == Tile.outside or
+                self.adjacent(index, right) == Tile.outside or
+                self.squeezable(self.get_adjacent_index(index, right).?, left) or
+                self.squeezable(self.get_adjacent_index(index, down).?, up) or
+                self.squeezable(self.get_adjacent_index(index, up).?, down) or
+                self.squeezable(self.get_adjacent_index(index, left).?, right))
+            {
+                self.tiles[index] = Tile.outside;
+            },
+            .loop => {
+                // Going up
+                if (self.adjacent(index, down) == Tile.outside or self.squeezable(self.get_adjacent_index(index, down).?, left)) {
+                    return switch (self.tiles[index]) {
+                        .loop => |c| switch (c) {
+                            '|' => self.tiles[index] = Tile{ .squeeze = left },
+                            '7' => self.tiles[index] = Tile{ .squeeze = left ^ down },
+                            'L' => self.tiles[index] = Tile{ .squeeze = left ^ down },
+                            'F' => self.tiles[index] = Tile{ .squeeze = left ^ up },
+                            else => {},
+                        },
+                        else => {},
+                    };
+                }
+                // Goind left
+                if (self.adjacent(index, right) == Tile.outside or self.squeezable(self.get_adjacent_index(index, right).?, down)) {
+                    return switch (self.tiles[index]) {
+                        .loop => |c| switch (c) {
+                            '-' => self.tiles[index] = Tile{ .squeeze = down },
+                            'J' => self.tiles[index] = Tile{ .squeeze = down ^ right },
+                            'L' => self.tiles[index] = Tile{ .squeeze = down ^ left },
+                            'F' => self.tiles[index] = Tile{ .squeeze = down ^ right },
+                            else => {},
+                        },
+                        else => {},
+                    };
+                }
+                // Goind down
+                if (self.adjacent(index, up) == Tile.outside or self.squeezable(self.get_adjacent_index(index, up).?, right)) {
+                    return switch (self.tiles[index]) {
+                        .loop => |c| switch (c) {
+                            '|' => self.tiles[index] = Tile{ .squeeze = right },
+                            '7' => self.tiles[index] = Tile{ .squeeze = right ^ up },
+                            'J' => self.tiles[index] = Tile{ .squeeze = right ^ down },
+                            'L' => self.tiles[index] = Tile{ .squeeze = right ^ up },
+                            else => {},
+                        },
+                        else => {},
+                    };
+                }
+                // Going right
+                if (self.adjacent(index, left) == Tile.outside or self.squeezable(self.get_adjacent_index(index, left).?, up)) {
+                    return switch (self.tiles[index]) {
+                        .loop => |c| switch (c) {
+                            '-' => self.tiles[index] = Tile{ .squeeze = up },
+                            'F' => self.tiles[index] = Tile{ .squeeze = up ^ left },
+                            '7' => self.tiles[index] = Tile{ .squeeze = up ^ right },
+                            'J' => self.tiles[index] = Tile{ .squeeze = up ^ left },
+                            else => {},
+                        },
+                        else => {},
+                    };
+                }
+            },
+            else => {},
         }
     }
 
-    for (input, tiles) |c, t| {
-        if (c == '\n') {
-            print("\n", .{});
-        } else {
+    pub fn is_char(self: Grid, index: usize, char: u8) bool {
+        return switch (self.tiles[index]) {
+            .unknown => |c| return c == char,
+            else => return false,
+        };
+    }
+
+    pub fn to_loop(self: Grid, index: usize) void {
+        self.tiles[index] = switch (self.tiles[index]) {
+            .unknown => |c| Tile{ .loop = c },
+            .loop => self.tiles[index],
+            else => unreachable,
+        };
+    }
+
+    pub fn print_grid(self: Grid) void {
+        for (self.tiles, 0..) |t, i| {
             switch (t) {
-                Tile.Loop => print("\x1b[1m{c}\x1b[0m", .{c}),
-                Tile.Junk => print(" ", .{}),
-                Tile.Outside => print("\x1b[31mO\x1b[0m", .{}),
-                Tile.Inside => print("\x1b[32mI\x1b[0m", .{}),
-                else => print("\x1b[33m{c}\x1b[0m", .{c}),
+                Tile.unknown => |c| print("{c}", .{c}),
+                Tile.loop => |c| print("\x1b[1m{c}\x1b[0m", .{c}),
+                Tile.junk => print(" ", .{}),
+                Tile.outside => print("\x1b[31mO\x1b[0m", .{}),
+                Tile.inside => print("\x1b[32mI\x1b[0m", .{}),
+                Tile.squeeze => |m| print("\x1b[33m{c}\x1b[0m", .{if (m < 10) @as(u8, @intCast(m)) + '0' else @as(u8, @intCast(m)) - 10 + 'A'}),
             }
+            if ((i + 1) % self.width == 0) print("\n", .{});
         }
     }
 
-    print("Day " ++ day ++ " >> {d}\n", .{steps});
-}
-
-pub fn get_tile_val(input: []const u8, tiles: []Tile, width: usize, index: usize) Tile {
-    if (tiles[index] == Tile.Junk) {
-        if (index < width or
-            index + width > input.len or
-            index % width == 139 or
-            index % width == 0 or
-            tiles[index + 1] == Tile.Outside or
-            tiles[index + 1 + width] == Tile.Outside or
-            tiles[index + width] == Tile.Outside or
-            tiles[index + width - 1] == Tile.Outside or
-            tiles[index - 1] == Tile.Outside or
-            tiles[index - 1 - width] == Tile.Outside or
-            tiles[index - width] == Tile.Outside or
-            tiles[index - width + 1] == Tile.Outside)
-        {
-            return Tile.Outside;
+    pub fn adjacent(self: Grid, index: usize, mask: u4) Tile {
+        if (self.get_adjacent_index(index, mask)) |i| {
+            return self.tiles[i];
+        } else {
+            return Tile.outside;
         }
-
-        return tiles[index];
-    } else if (tiles[index] == Tile.Loop) {
-        if (index + width > input.len - 2 or tiles[index + width] == Tile.Outside) {
-            if (index < width or input[index] == '|' or input[index])
-        }
-        // if ((index + width > input.len - 1 or tiles[index + width] == Tile.Outside or (tiles[index + width] == Tile.Squeeze and (input[index + width] == '|' or input[index + width] == 'L' or input[index + width] == 'F'))) and
-        //     (index < width or input[index] == 'L' or input[index] == '|' or input[index] == 'F'))
-        // {
-        //     return Tile.Squeeze;
-        // }
-        //
-        // if ((index < width or tiles[index - width] == Tile.Outside or (tiles[index - width] == Tile.Squeeze and (input[index - width] == '|' or input[index - width] == 'L' or input[index - width] == 'F'))) and
-        //     (index + width > input.len - 1 or input[index] == 'L' or input[index] == '|' or input[index] == 'F'))
-        // {
-        //     return Tile.Squeeze;
-        // }
-        //
-        // if ((index % width == 0 or tiles[index - 1] == Tile.Outside or (tiles[index - 1] == Tile.Squeeze and (input[index - 1] == '-' or input[index - 1] == 'F' or input[index - 1] == '7'))) and
-        //     (index % width == 139 or input[index] == '-' or input[index] == '7' or input[index] == 'F'))
-        // {
-        //     return Tile.Squeeze;
-        // }
-        //
-        // if ((index % width == 139 or tiles[index + 1] == Tile.Outside or (tiles[index + 1] == Tile.Squeeze and (input[index + 1] == '-' or input[index + 1] == 'F' or input[index + 1] == '7'))) and
-        //     (index % width == 0 or input[index] == '-' or input[index] == '7' or input[index] == 'F'))
-        // {
-        //     return Tile.Squeeze;
-        // }
-        //
-        // if ((index % width == 139 or tiles[index + 1] == Tile.Outside or (tiles[index + 1] == Tile.Squeeze and (input[index + 1] == '-' or input[index + 1] == 'J' or input[index + 1] == 'L'))) and
-        //     (index % width == 0 or input[index] == '-' or input[index] == 'L' or input[index] == 'J'))
-        // {
-        //     return Tile.Squeeze;
-        // }
-        //
-        // if ((index % width == 0 or tiles[index - 1] == Tile.Outside or (tiles[index - 1] == Tile.Squeeze and (input[index - 1] == '-' or input[index - 1] == 'J' or input[index - 1] == 'L'))) and
-        //     (index % width == 139 or input[index] == '-' or input[index] == 'L' or input[index] == 'J'))
-        // {
-        //     return Tile.Squeeze;
-        // }
-        //
-        // if ((index < width or tiles[index - width] == Tile.Outside or (tiles[index - width] == Tile.Squeeze and (input[index - width] == 'J' or input[index - width] == '|' or input[index - width] == '7'))) and (index + width > input.len - 1 or input[index] == '|' or input[index] == '7' or input[index] == 'J')) {
-        //     return Tile.Squeeze;
-        // }
-        //
-        // if ((index + width > input.len - 1 or tiles[index + width] == Tile.Outside or (tiles[index + width] == Tile.Squeeze and (input[index + width] == 'J' or input[index + width] == '|' or input[index + width] == '7'))) and
-        //     (index < width or input[index] == '|' or input[index] == '7' or input[index] == 'J'))
-        // {
-        //     return Tile.Squeeze;
-        // }
     }
 
-    return tiles[index];
-}
-
-pub fn collapse_tile(input: []const u8, tiles: *[]Tile, width: usize, index: usize) void {
-    const tile = get_tile_val(input, tiles.*, width, index);
-    tiles.*[index] = tile;
-}
+    pub fn get_adjacent_index(self: Grid, index: usize, mask: u4) ?usize {
+        return switch (mask) {
+            up => if (index < self.width) null else index - self.width,
+            left => if (index % self.width == 0) null else index - 1,
+            down => if (index + self.width >= self.tiles.len) null else index + self.width,
+            right => if (index % self.width == self.width - 1) null else index + 1,
+            up ^ right => if (index < self.width or index % self.width == self.width - 1) null else index - self.width + 1,
+            up ^ left => if (index < self.width or index % self.width == 0) null else index - self.width - 1,
+            down ^ right => if (index + self.width >= self.tiles.len or index % self.width == self.width - 1) null else index + self.width + 1,
+            down ^ left => if (index + self.width >= self.tiles.len or index % self.width == 0) null else index + self.width - 1,
+            else => unreachable,
+        };
+    }
+};
 
 const Tile = union(enum) {
-    Junk,
-    Loop,
-    Squeeze: Squeezable,
-    Inside,
-    Outside,
+    unknown: u8,
+    junk,
+    loop: u8,
+    squeeze: u4, // The bits are in order of wasd. The second most significant bit is for left squeeze for example.
+    inside,
+    outside,
 };
 
-const Squeezable = struct {
-    Right: bool,
-    Left: bool,
-    Up: bool,
-    Down: bool,
-};
+const up: u4 = 0b1000;
+const left: u4 = 0b0100;
+const down: u4 = 0b0010;
+const right: u4 = 0b0001;
 
 const Turtle = struct {
     pos: usize,
@@ -202,7 +254,12 @@ const Turtle = struct {
         };
     }
 
-    pub fn move(turtle: *Turtle, pipe: u8, width: usize) void {
+    pub fn move(turtle: *Turtle, tile: Tile, width: usize) void {
+        const pipe = switch (tile) {
+            .loop => |c| c,
+            else => unreachable,
+        };
+
         turtle.mov = find_move(pipe, turtle.mov);
         const diff = turtle.mov.to_diff(width);
         turtle.pos = @intCast(@as(isize, @intCast(turtle.pos)) + diff);
@@ -247,6 +304,3 @@ pub fn find_move(pipe: u8, previous: Movement) Movement {
         else => unreachable,
     };
 }
-
-const expect = std.testing.expect;
-const test_alloc = std.testing.allocator;
