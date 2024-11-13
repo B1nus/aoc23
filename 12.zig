@@ -11,8 +11,12 @@ pub fn main() !void {
 
     var sum: usize = 0;
     var lines = std.mem.splitScalar(u8, input, '\n');
-    while (lines.next()) |line| {
-        if (line.len > 0) {
+    var line_i: usize = 0;
+    while (lines.next()) |line_| {
+        if (line_.len > 0) {
+            const line_list = try unfold(line_, allocator, 5);
+            defer line_list.deinit();
+            const line = line_list.items;
             // Parse line
             var parts = std.mem.splitScalar(u8, line, ' ');
             const damaged = parts.next().?;
@@ -24,18 +28,41 @@ pub fn main() !void {
                 }
             }
 
-            var sub_sum: usize = 0;
             for (0..try std.math.powi(usize, 2, std.mem.count(u8, damaged, "?"))) |broken| {
                 if (correct(damaged, broken, groups.items)) {
                     // print_attempt(damaged, broken);
-                    sub_sum += 1;
+                    sum += 1;
                 }
             }
-            sum += sub_sum;
+            print("line:{d} out of 1000, sum:{d}\n", .{ line_i, sum });
+            line_i += 1;
         }
     }
 
     print("Day " ++ day ++ " >> {d}\n", .{sum});
+}
+
+pub fn unfold(line: []const u8, allocator: std.mem.Allocator, repeat: usize) !std.ArrayList(u8) {
+    var unfolded = std.ArrayList(u8).init(allocator);
+    var parts = std.mem.splitScalar(u8, line, ' ');
+    const symbols = parts.next().?;
+    const groups = parts.next().?;
+
+    for (0..repeat) |i| {
+        try unfolded.appendSlice(symbols);
+        if (i != repeat - 1) {
+            try unfolded.append('?');
+        }
+    }
+    try unfolded.append(' ');
+
+    for (0..repeat) |i| {
+        try unfolded.appendSlice(groups);
+        if (i != repeat - 1) {
+            try unfolded.append(',');
+        }
+    }
+    return unfolded;
 }
 
 // Debugging
@@ -116,4 +143,10 @@ test "correct" {
     try expect(correct(".??..??...?##.", 0b10101, &.{ 1, 1, 3 }));
     try expect(!correct("#?#", 0b1, &.{ 1, 1 }));
     try expect(!correct("?###????????", 0b0, &.{ 3, 2, 1 }));
+}
+
+test "unfold" {
+    const unfolded = try unfold(".# 1", std.testing.allocator, 5);
+    defer unfolded.deinit();
+    try expect(std.mem.eql(u8, ".#?.#?.#?.#?.# 1,1,1,1,1", unfolded.items));
 }
