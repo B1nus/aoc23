@@ -1,6 +1,6 @@
-// Try every combination (using for example grey code or binary counting)
-// For every combination, check if it's valid
-// Print the sum
+// New idea:
+//  The numbers give more info than the symbols.
+//  For alla possible placements of the groups, check if they work with the symbol string
 const std = @import("std");
 const print = std.debug.print;
 
