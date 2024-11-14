@@ -15,7 +15,7 @@ pub fn main() !void {
         const parsed = try Line.from_line(line, allocator);
         sum += try parsed.count_configurations(allocator);
         line_num += 1;
-        print("line={d}\n", .{line_num});
+        print("\nline={d}\n", .{line_num});
     }
 
     print("Day " ++ day ++ " >> {d}\n", .{sum});
@@ -126,6 +126,7 @@ const PositionIterator = struct {
     positions: []usize,
     lengths: []usize,
     length: usize,
+    depth: usize,
     allocator: std.mem.Allocator,
     pub fn new(lengths: []usize, length: usize, allocator: std.mem.Allocator) !PositionIterator {
         // I'm assuming that the lengths fit, which is always the case here.
@@ -142,6 +143,7 @@ const PositionIterator = struct {
             .lengths = lengths,
             .length = length,
             .allocator = allocator,
+            .depth = 0,
         };
     }
 
@@ -163,7 +165,7 @@ const PositionIterator = struct {
         print("\n", .{});
     }
 
-    pub fn next(self: PositionIterator) ?[]usize {
+    pub fn next(self: *PositionIterator) ?[]usize {
         const pos_conf = self.positions;
         self.positions[self.positions.len - 1] -= 1;
         var depth: usize = 0;
@@ -178,6 +180,10 @@ const PositionIterator = struct {
                     self.positions[self.positions.len - 2 - depth + i + 1] = self.positions[self.positions.len - 2 - depth + i] + self.lengths[self.lengths.len - 2 - depth + i] + 1;
                 }
                 depth += 1;
+                if (depth > self.depth) {
+                    self.depth = depth;
+                    print("#", .{});
+                }
                 continue;
             }
             break;
