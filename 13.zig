@@ -6,8 +6,26 @@ pub fn main() !void {
     var map_iter = MapIterator.new(input);
 
     var sum: usize = 0;
-    while (map_iter.next()) |map| {
-        sum += map.reflection_points();
+    var map_ = map_iter.next();
+    var map_count: usize = 0;
+    map_iterator: while (map_ != null) : ({
+        map_ = map_iter.next();
+        map_count += 1;
+    }) {
+        var map = map_.?;
+        const ignore_row = map.horizontal_reflection(0);
+        const ignore_col = map.vertical_reflection(0);
+        for (0..map.width) |x| {
+            for (0..map.height) |y| {
+                map.flip_bit(y, x);
+                const points = map.reflection_points(ignore_row, ignore_col);
+                if (points > 0) {
+                    sum += points;
+                    continue :map_iterator;
+                }
+                map.flip_bit(y, x);
+            }
+        }
     }
 
     print("Day 13 >> {d}\n", .{sum});
@@ -17,6 +35,11 @@ const Map = struct {
     characters: [30]usize,
     width: usize,
     height: usize,
+
+    pub fn flip_bit(self: *Map, row: usize, column: usize) void {
+        const mask: usize = 1;
+        self.characters[row] ^= (mask << @intCast(self.width - 1)) >> @intCast(column);
+    }
 
     pub fn is_rock(self: Map, row: usize, column: usize) bool {
         return ((self.characters[row] << @intCast(column + 1)) >> @intCast(self.width)) & 1 == 1;
@@ -35,34 +58,38 @@ const Map = struct {
         }
     }
 
-    pub fn horizontal_reflection(self: Map) usize {
+    pub fn horizontal_reflection(self: Map, ignore: usize) usize {
         outer: for (1..self.height) |y| {
-            for (0..@min(y, self.height - y)) |d| {
-                if (self.characters[y + d] != self.characters[y - d - 1]) {
-                    continue :outer;
-                }
-            }
-            return y;
-        }
-        return 0;
-    }
-
-    pub fn vertical_reflection(self: Map) usize {
-        outer: for (1..self.width) |x| {
-            for (0..@min(x, self.width - x)) |d| {
-                for (0..self.height) |y| {
-                    if (self.is_rock(y, x + d) != self.is_rock(y, x - d - 1)) {
+            if (y != ignore) {
+                for (0..@min(y, self.height - y)) |d| {
+                    if (self.characters[y + d] != self.characters[y - d - 1]) {
                         continue :outer;
                     }
                 }
+                return y;
             }
-            return x;
         }
         return 0;
     }
 
-    pub fn reflection_points(self: Map) usize {
-        return self.horizontal_reflection() * 100 + self.vertical_reflection();
+    pub fn vertical_reflection(self: Map, ignore: usize) usize {
+        outer: for (1..self.width) |x| {
+            if (x != ignore) {
+                for (0..@min(x, self.width - x)) |d| {
+                    for (0..self.height) |y| {
+                        if (self.is_rock(y, x + d) != self.is_rock(y, x - d - 1)) {
+                            continue :outer;
+                        }
+                    }
+                }
+                return x;
+            }
+        }
+        return 0;
+    }
+
+    pub fn reflection_points(self: Map, row_ignore: usize, col_ignore: usize) usize {
+        return self.horizontal_reflection(row_ignore) * 100 + self.vertical_reflection(col_ignore);
     }
 };
 
