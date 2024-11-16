@@ -9,6 +9,18 @@ pub fn main() !void {
     const height = input.height;
     const chars = input.chars;
 
+    var max: usize = 0;
+    for (0..width) |i| {
+        max = @max(max, try energized_tiles(Beam{ .dir = Direction.Down, .pos = i }, chars, width, height));
+        max = @max(max, try energized_tiles(Beam{ .dir = Direction.Up, .pos = width * height - 1 - i }, chars, width, height));
+        max = @max(max, try energized_tiles(Beam{ .dir = Direction.Right, .pos = i * width }, chars, width, height));
+        max = @max(max, try energized_tiles(Beam{ .dir = Direction.Left, .pos = i * width + width - 1 }, chars, width, height));
+    }
+
+    print("Day 16 >> {d}\n", .{max});
+}
+
+pub fn energized_tiles(start_beam: Beam, chars: []const u8, width: usize, height: usize) !usize {
     const energized = try page_allocator.alloc(bool, chars.len);
     for (energized) |*e| {
         e.* = false;
@@ -16,12 +28,7 @@ pub fn main() !void {
 
     var beams = std.ArrayList(Beam).init(page_allocator);
     var cached_beams = std.AutoHashMap(Beam, void).init(page_allocator);
-    const start_dir = switch (chars[0]) {
-        '\\', '|' => Direction.Down,
-        '/' => Direction.Up,
-        else => Direction.Right,
-    };
-    try beams.append(Beam{ .dir = start_dir, .pos = 0 });
+    try beams.append(start_beam);
     var beams_to_delete = std.ArrayList(usize).init(page_allocator);
 
     while (beams.items.len > 0) {
@@ -29,37 +36,40 @@ pub fn main() !void {
             if (try cached_beams.fetchPut(beam, void{})) |_| {
                 try beams_to_delete.append(i);
                 continue;
+            } else {
+                energized[beam.pos] = true;
             }
-            energized[beam.pos] = true;
+            switch (chars[beams.items[i].pos]) {
+                '|' => if (beam.dir == Direction.Left or beam.dir == Direction.Right) {
+                    beams.items[i].dir = Direction.Up;
+                    try beams.append(Beam{ .dir = Direction.Down, .pos = beams.items[i].pos });
+                },
+                '-' => if (beam.dir == Direction.Up or beam.dir == Direction.Down) {
+                    beams.items[i].dir = Direction.Left;
+                    try beams.append(Beam{ .dir = Direction.Right, .pos = beams.items[i].pos });
+                },
+                '/' => switch (beam.dir) {
+                    .Up => beams.items[i].dir = Direction.Right,
+                    .Down => beams.items[i].dir = Direction.Left,
+                    .Left => beams.items[i].dir = Direction.Down,
+                    .Right => beams.items[i].dir = Direction.Up,
+                },
+                '\\' => switch (beam.dir) {
+                    .Up => beams.items[i].dir = Direction.Left,
+                    .Down => beams.items[i].dir = Direction.Right,
+                    .Left => beams.items[i].dir = Direction.Up,
+                    .Right => beams.items[i].dir = Direction.Down,
+                },
+                else => {},
+            }
+        }
+        for (beams.items, 0..) |beam, i| {
             if (walk_beam(beam.pos, beam.dir, width, height)) |new_pos| {
                 beams.items[i].pos = new_pos;
-                switch (chars[new_pos]) {
-                    '|' => if (beam.dir == Direction.Left or beam.dir == Direction.Right) {
-                        beams.items[i].dir = Direction.Up;
-                        try beams.append(Beam{ .dir = Direction.Down, .pos = new_pos });
-                    },
-                    '-' => if (beam.dir == Direction.Up or beam.dir == Direction.Down) {
-                        beams.items[i].dir = Direction.Left;
-                        try beams.append(Beam{ .dir = Direction.Right, .pos = new_pos });
-                    },
-                    '/' => switch (beam.dir) {
-                        .Up => beams.items[i].dir = Direction.Right,
-                        .Down => beams.items[i].dir = Direction.Left,
-                        .Left => beams.items[i].dir = Direction.Down,
-                        .Right => beams.items[i].dir = Direction.Up,
-                    },
-                    '\\' => switch (beam.dir) {
-                        .Up => beams.items[i].dir = Direction.Left,
-                        .Down => beams.items[i].dir = Direction.Right,
-                        .Left => beams.items[i].dir = Direction.Up,
-                        .Right => beams.items[i].dir = Direction.Down,
-                    },
-                    else => {},
-                }
-            } else {
+            } else if (std.mem.count(usize, beams_to_delete.items, &.{i}) == 0) {
                 try beams_to_delete.append(i);
             }
-
+            //
             // for (chars, 0..) |c, j| {
             //     if (energized[j]) {
             //         print("\x1b[31m{c}\x1b[0m", .{c});
@@ -73,12 +83,13 @@ pub fn main() !void {
             //
             // _ = try stdin.readByte();
         }
+        std.mem.sort(usize, beams_to_delete.items, {}, comptime std.sort.asc(usize));
         while (beams_to_delete.popOrNull()) |del_index| {
             _ = beams.orderedRemove(del_index);
         }
     }
 
-    print("Day 16 >> {d}\n", .{std.mem.count(bool, energized, &.{true})});
+    return std.mem.count(bool, energized, &.{true});
 }
 
 const Beam = struct {
