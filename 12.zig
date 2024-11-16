@@ -1,253 +1,106 @@
-// Maybe a recursive solution would be better. But I just realeized a way to optimize this version.
+// Please note that I cheated on this one. I'm not good at recursion. I don't seem to good with hashmaps either.
 const std = @import("std");
 const print = std.debug.print;
-
 pub fn main() !void {
-    const day = @src().file[0..2];
-    const input = @embedFile(day ++ ".txt");
     const allocator = std.heap.page_allocator;
+    var cache = std.HashMap(State, usize, State.HashContext, std.hash_map.default_max_load_percentage).init(allocator);
+    defer cache.deinit();
 
+    var lines = std.mem.splitScalar(u8, @embedFile("12.txt"), '\n');
     var sum: usize = 0;
-    var line_num: usize = 0;
-    var lines = std.mem.splitScalar(u8, input, '\n');
     while (lines.next()) |line| {
-        if (line.len == 0) continue;
-
-        // print("unparsed: {s}\n", .{line});
-        const parsed = try Line.from_line(line, allocator);
-        sum += try parsed.count_configurations(allocator);
-        line_num += 1;
-        print("\nline={d}\n", .{line_num});
+        if (line.len == 0) break;
+        const state = try parse_and_unfold(line, allocator);
+        const count_ = try count(state, &cache);
+        sum += count_;
     }
-
-    print("Day " ++ day ++ " >> {d}\n", .{sum});
+    print("Day 12 >> {d}\n", .{sum});
 }
 
-const Line = struct {
-    broken: u128,
-    unknown: u128,
-    length: usize,
-    lengths: []usize,
-    allocator: std.mem.Allocator,
+pub fn parse(line: []const u8, allocator: std.mem.Allocator) !State {
+    var line_iter = std.mem.splitScalar(u8, line, ' ');
+    const cfg_len = std.mem.indexOfScalar(u8, line, ' ').?;
+    const cfg = try allocator.alloc(u8, cfg_len);
+    std.mem.copyForwards(u8, cfg, line_iter.next().?);
 
-    pub fn from_line(line: []const u8, allocator: std.mem.Allocator) !Line {
-        var parts = std.mem.splitScalar(u8, line, ' ');
-        const symbols = parts.next().?;
-        const lengths_str = parts.next().?;
-
-        var length: usize = 0;
-        var broken: u128 = 0;
-        var unknown: u128 = 0;
-        for (0..5) |i| {
-            for (symbols) |c| {
-                broken = broken << 1;
-                unknown = unknown << 1;
-                length += 1;
-                switch (c) {
-                    '?' => unknown ^= 1,
-                    '#' => broken ^= 1,
-                    '.' => {},
-                    else => unreachable,
-                }
-            }
-            if (i != 4) {
-                broken = broken << 1;
-                unknown = unknown << 1;
-                length += 1;
-                unknown ^= 1;
-            }
-        }
-
-        const lengths_count = std.mem.count(u8, lengths_str, ",") + 1;
-        var lengths = try allocator.alloc(usize, lengths_count * 5);
-        var lengths_iter = std.mem.splitScalar(u8, lengths_str, ',');
-        for (0..lengths_count) |i| {
-            lengths[i] = try std.fmt.parseInt(usize, lengths_iter.next().?, 10);
-        }
-        for (1..5) |r| {
-            for (0..lengths_count) |i| {
-                lengths[i + r * lengths_count] = lengths[i];
-            }
-        }
-
-        return Line{
-            .broken = broken,
-            .unknown = unknown,
-            .length = length,
-            .lengths = lengths,
-            .allocator = allocator,
-        };
+    var nums_iter = std.mem.splitScalar(u8, line_iter.next().?, ',');
+    const nums_count = std.mem.count(u8, nums_iter.buffer, ",") + 1;
+    const nums = try allocator.alloc(usize, nums_count);
+    for (nums) |*num| {
+        num.* = try std.fmt.parseInt(usize, nums_iter.next().?, 10);
     }
+    return State{ .cfg = cfg, .nums = nums };
+}
 
-    pub fn print_line(self: Line) void {
-        for (0..self.length) |i| {
-            const shift: u7 = @intCast(self.length - 1 - i);
-            const broken = (self.broken >> shift) & 1 == 1;
-            const unknown = (self.unknown >> shift) & 1 == 1;
-
-            if (broken) {
-                print("#", .{});
-            } else if (unknown) {
-                print("?", .{});
-            } else {
-                print(".", .{});
-            }
-        }
-        print(" {d}", .{self.lengths[0]});
-        for (self.lengths[1..]) |l| {
-            print(",{d}", .{l});
-        }
-        print("\n", .{});
+pub fn parse_and_unfold(line: []const u8, allocator: std.mem.Allocator) !State {
+    var line_iter = std.mem.splitScalar(u8, line, ' ');
+    const cfg_len = std.mem.indexOfScalar(u8, line, ' ').?;
+    var cfg = try allocator.alloc(u8, cfg_len * 5 + 4);
+    std.mem.copyForwards(u8, cfg, line_iter.next().?);
+    cfg[cfg_len] = '?';
+    for (cfg_len + 1..cfg.len) |i| {
+        cfg[i] = cfg[i % (cfg_len + 1)];
     }
-
-    pub fn count_configurations(self: Line, allocator: std.mem.Allocator) !usize {
-        var pos_iter = try PositionIterator.new(self.lengths, self.length, allocator);
-        defer pos_iter.deinit();
-
-        var configuration_count: usize = 0;
-        // self.print_line();
-        while (pos_iter.next()) |pos_conf| {
-            // pos_iter.print_position_configuration();
-            const skip_ = self.skip(pos_conf);
-            if (skip_ == 0 and self.try_configuration(position_config_to_bits(pos_conf, self.lengths, self.length))) {
-                configuration_count += 1;
-            } else {
-                pos_iter.skip(skip_) catch {
-                    return configuration_count;
-                };
-            }
-        }
-        return configuration_count;
-    }
-
-    pub fn skip(self: Line, con_pos: []usize) usize {
-        var j: usize = 0;
-        for (0..self.length) |i| {
-            if ((i >= con_pos[j] and i < con_pos[j] + self.lengths[j])) {
-                if (((self.broken ^ self.unknown) << @intCast(i)) >> @intCast(self.length - 1) != 1) {
-                    return j;
-                }
-            } else if ((self.broken << @intCast(i)) >> @intCast(self.length - 1) == 1) {
-                if (i <= con_pos[j] + self.lengths[j]) {
-                    return j;
-                } else {
-                    return j - 1;
-                }
-            }
-            if (i >= con_pos[j] + self.lengths[j]) {
-                if ((self.broken << @intCast(i)) >> @intCast(self.length - 1) == 1) {
-                    return j;
-                }
-                j += 1;
-            }
-        }
-        return 0;
-    }
-
-    pub fn try_configuration(self: Line, configuration_bits: u128) bool {
-        return configuration_bits & ~self.broken & ~self.unknown == 0;
-    }
-
-    pub fn deinit(self: Line) void {
-        self.allocator.free(self.lengths);
-    }
-};
-
-const PositionIterator = struct {
-    positions: []usize,
-    lengths: []usize,
-    length: usize,
-    depth: usize,
-    allocator: std.mem.Allocator,
-    pub fn new(lengths: []usize, length: usize, allocator: std.mem.Allocator) !PositionIterator {
-        // I'm assuming that the lengths fit, which is always the case here.
-        var positions = try allocator.alloc(usize, lengths.len);
-
-        positions[0] = 0;
-        for (lengths[0 .. lengths.len - 2], 1..) |l, i| {
-            positions[i] = positions[i - 1] + l + 1;
-        }
-        positions[positions.len - 1] = length + 1 - lengths[lengths.len - 1];
-
-        return PositionIterator{
-            .positions = positions,
-            .lengths = lengths,
-            .length = length,
-            .allocator = allocator,
-            .depth = 0,
-        };
-    }
-
-    pub fn print_position_configuration(self: PositionIterator) void {
-        var x: usize = 0;
-        for (self.positions, 0..) |p, i| {
-            while (x < p) {
-                print(".", .{});
-                x += 1;
-            }
-            for (0..self.lengths[i]) |_| {
-                print("#", .{});
-                x += 1;
-            }
-        }
-        for (x..self.length) |_| {
-            print(".", .{});
-        }
-        print("\n", .{});
-    }
-
-    pub fn next(self: *PositionIterator) ?[]usize {
-        const pos_conf = self.positions;
-        self.positions[self.positions.len - 1] -= 1;
-        var depth: usize = 0;
-        while (depth + 1 <= self.lengths.len) {
-            if (self.positions[self.positions.len - 2] + self.lengths[self.positions.len - 2] >= self.positions[self.positions.len - 1]) {
-                if (depth + 2 > self.positions.len) {
-                    return null;
-                }
-                self.skip(self.positions.len - 2 - depth) catch {
-                    return null;
-                };
-                depth += 1;
-                if (depth > self.depth) {
-                    self.depth = depth;
-                    print("#", .{});
-                }
-                continue;
-            }
-            break;
+    var nums_iter = std.mem.splitScalar(u8, line_iter.next().?, ',');
+    const nums_count = std.mem.count(u8, nums_iter.buffer, ",") + 1;
+    const nums = try allocator.alloc(usize, nums_count * 5);
+    for (nums, 0..) |*num, i| {
+        if (nums_iter.next()) |num_str| {
+            num.* = try std.fmt.parseInt(usize, num_str, 10);
         } else {
-            return null;
-        }
-        return pos_conf;
-    }
-
-    pub fn skip(self: PositionIterator, index: usize) !void {
-        self.positions[index] += 1;
-        self.positions[self.positions.len - 1] = self.length - self.lengths[self.lengths.len - 1];
-        for (0..(self.positions.len - 2 - index)) |i| {
-            self.positions[index + i + 1] = self.positions[index + i] + self.lengths[index + i] + 1;
+            num.* = nums[i % nums_count];
         }
     }
+    return State{ .cfg = cfg, .nums = nums };
+}
 
-    pub fn deinit(self: PositionIterator) void {
-        self.allocator.free(self.positions);
-    }
+const State = struct {
+    cfg: []const u8,
+    nums: []const usize,
+
+    pub const HashContext = struct {
+        pub fn hash(_: HashContext, self: State) u64 {
+            var h = std.hash.Wyhash.init(0);
+            h.update(self.cfg);
+            h.update(std.mem.asBytes(self.nums));
+            return h.final();
+        }
+
+        pub fn eql(_: HashContext, self: State, other: State) bool {
+            return std.mem.eql(u8, self.cfg, other.cfg) and
+                std.mem.eql(usize, self.nums, other.nums);
+        }
+    };
 };
 
-pub fn position_config_to_bits(positions: []usize, lengths: []usize, length: usize) u128 {
-    var bits: u128 = 0;
-    var x: usize = 0;
-    for (positions, 0..) |p, i| {
-        while (x < p) {
-            bits = bits << 1;
-            x += 1;
-        }
-        for (0..lengths[i]) |_| {
-            bits = bits << 1;
-            bits ^= 1;
-            x += 1;
-        }
+pub fn count(state: State, cache: *std.HashMap(State, usize, State.HashContext, std.hash_map.default_max_load_percentage)) !usize {
+    if (state.cfg.len == 0) {
+        return if (state.nums.len == 0) 1 else 0;
     }
-    return bits << @intCast(length - x);
+    if (state.nums.len == 0) {
+        return if (std.mem.count(u8, state.cfg, "#") > 0) 0 else 1;
+    }
+
+    if (cache.get(state)) |result| {
+        return result;
+    } else {
+        var result: usize = 0;
+
+        if (state.cfg[0] == '.' or state.cfg[0] == '?') {
+            result += try count(State{ .cfg = state.cfg[1..], .nums = state.nums }, cache);
+        }
+        if (state.cfg[0] == '#' or state.cfg[0] == '?') {
+            if (state.nums[0] <= state.cfg.len and std.mem.count(u8, state.cfg[0..state.nums[0]], ".") == 0 and (state.nums[0] == state.cfg.len or state.cfg[state.nums[0]] != '#')) {
+                if (state.nums[0] + 1 >= state.cfg.len) {
+                    result += try count(State{ .cfg = "", .nums = state.nums[1..] }, cache);
+                } else {
+                    result += try count(State{ .cfg = state.cfg[state.nums[0] + 1 ..], .nums = state.nums[1..] }, cache);
+                }
+            }
+        }
+
+        try cache.put(state, result);
+
+        return result;
+    }
 }
