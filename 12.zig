@@ -1,119 +1,106 @@
-// Try every combination (using for example grey code or binary counting)
-// For every combination, check if it's valid
-// Print the sum
+// Please note that I cheated on this one. I'm not good at recursion. I don't seem to good with hashmaps either.
 const std = @import("std");
 const print = std.debug.print;
-
 pub fn main() !void {
-    const day = @src().file[0..2];
-    const input = @embedFile(day ++ ".txt");
     const allocator = std.heap.page_allocator;
+    var cache = std.HashMap(State, usize, State.HashContext, std.hash_map.default_max_load_percentage).init(allocator);
+    defer cache.deinit();
 
+    var lines = std.mem.splitScalar(u8, @embedFile("12.txt"), '\n');
     var sum: usize = 0;
-    var lines = std.mem.splitScalar(u8, input, '\n');
     while (lines.next()) |line| {
-        if (line.len > 0) {
-            // Parse line
-            var parts = std.mem.splitScalar(u8, line, ' ');
-            const damaged = parts.next().?;
-            var group_strings = std.mem.splitScalar(u8, parts.next().?, ',');
-            var groups = std.ArrayList(usize).init(allocator);
-            while (group_strings.next()) |group_string| {
-                if (group_string.len > 0) {
-                    try groups.append(try std.fmt.parseInt(usize, group_string, 10));
+        if (line.len == 0) break;
+        const state = try parse_and_unfold(line, allocator);
+        const count_ = try count(state, &cache);
+        sum += count_;
+    }
+    print("Day 12 >> {d}\n", .{sum});
+}
+
+pub fn parse(line: []const u8, allocator: std.mem.Allocator) !State {
+    var line_iter = std.mem.splitScalar(u8, line, ' ');
+    const cfg_len = std.mem.indexOfScalar(u8, line, ' ').?;
+    const cfg = try allocator.alloc(u8, cfg_len);
+    std.mem.copyForwards(u8, cfg, line_iter.next().?);
+
+    var nums_iter = std.mem.splitScalar(u8, line_iter.next().?, ',');
+    const nums_count = std.mem.count(u8, nums_iter.buffer, ",") + 1;
+    const nums = try allocator.alloc(usize, nums_count);
+    for (nums) |*num| {
+        num.* = try std.fmt.parseInt(usize, nums_iter.next().?, 10);
+    }
+    return State{ .cfg = cfg, .nums = nums };
+}
+
+pub fn parse_and_unfold(line: []const u8, allocator: std.mem.Allocator) !State {
+    var line_iter = std.mem.splitScalar(u8, line, ' ');
+    const cfg_len = std.mem.indexOfScalar(u8, line, ' ').?;
+    var cfg = try allocator.alloc(u8, cfg_len * 5 + 4);
+    std.mem.copyForwards(u8, cfg, line_iter.next().?);
+    cfg[cfg_len] = '?';
+    for (cfg_len + 1..cfg.len) |i| {
+        cfg[i] = cfg[i % (cfg_len + 1)];
+    }
+    var nums_iter = std.mem.splitScalar(u8, line_iter.next().?, ',');
+    const nums_count = std.mem.count(u8, nums_iter.buffer, ",") + 1;
+    const nums = try allocator.alloc(usize, nums_count * 5);
+    for (nums, 0..) |*num, i| {
+        if (nums_iter.next()) |num_str| {
+            num.* = try std.fmt.parseInt(usize, num_str, 10);
+        } else {
+            num.* = nums[i % nums_count];
+        }
+    }
+    return State{ .cfg = cfg, .nums = nums };
+}
+
+const State = struct {
+    cfg: []const u8,
+    nums: []const usize,
+
+    pub const HashContext = struct {
+        pub fn hash(_: HashContext, self: State) u64 {
+            var h = std.hash.Wyhash.init(0);
+            h.update(self.cfg);
+            h.update(std.mem.asBytes(self.nums));
+            return h.final();
+        }
+
+        pub fn eql(_: HashContext, self: State, other: State) bool {
+            return std.mem.eql(u8, self.cfg, other.cfg) and
+                std.mem.eql(usize, self.nums, other.nums);
+        }
+    };
+};
+
+pub fn count(state: State, cache: *std.HashMap(State, usize, State.HashContext, std.hash_map.default_max_load_percentage)) !usize {
+    if (state.cfg.len == 0) {
+        return if (state.nums.len == 0) 1 else 0;
+    }
+    if (state.nums.len == 0) {
+        return if (std.mem.count(u8, state.cfg, "#") > 0) 0 else 1;
+    }
+
+    if (cache.get(state)) |result| {
+        return result;
+    } else {
+        var result: usize = 0;
+
+        if (state.cfg[0] == '.' or state.cfg[0] == '?') {
+            result += try count(State{ .cfg = state.cfg[1..], .nums = state.nums }, cache);
+        }
+        if (state.cfg[0] == '#' or state.cfg[0] == '?') {
+            if (state.nums[0] <= state.cfg.len and std.mem.count(u8, state.cfg[0..state.nums[0]], ".") == 0 and (state.nums[0] == state.cfg.len or state.cfg[state.nums[0]] != '#')) {
+                if (state.nums[0] + 1 >= state.cfg.len) {
+                    result += try count(State{ .cfg = "", .nums = state.nums[1..] }, cache);
+                } else {
+                    result += try count(State{ .cfg = state.cfg[state.nums[0] + 1 ..], .nums = state.nums[1..] }, cache);
                 }
             }
-
-            var sub_sum: usize = 0;
-            for (0..try std.math.powi(usize, 2, std.mem.count(u8, damaged, "?"))) |broken| {
-                if (correct(damaged, broken, groups.items)) {
-                    // print_attempt(damaged, broken);
-                    sub_sum += 1;
-                }
-            }
-            sum += sub_sum;
         }
+
+        try cache.put(state, result);
+
+        return result;
     }
-
-    print("Day " ++ day ++ " >> {d}\n", .{sum});
-}
-
-// Debugging
-pub fn print_attempt(damaged: []const u8, broken: u64) void {
-    var unknown_i: usize = 0;
-    for (damaged) |c| {
-        switch (c) {
-            '?' => {
-                if (bitAsBool(broken, @intCast(unknown_i))) print("#", .{}) else print(".", .{});
-                unknown_i += 1;
-            },
-            else => print("{c}", .{c}),
-        }
-    }
-    print("\n", .{});
-}
-
-pub fn correct(damaged: []const u8, broken: u64, groups: []const usize) bool {
-    var i: usize = 0;
-    var broken_i: usize = 0;
-    for (groups) |group| {
-        if (i >= damaged.len) {
-            return false;
-        }
-        var count: usize = 0;
-        while (i < damaged.len) {
-            switch (damaged[i]) {
-                '.' => {
-                    if (count > 0) {
-                        break;
-                    }
-                },
-                '#' => {
-                    count += 1;
-                },
-                '?' => {
-                    if (bitAsBool(broken, @intCast(broken_i))) {
-                        count += 1;
-                    } else if (count > 0) {
-                        break;
-                    }
-                    broken_i += 1;
-                },
-                else => unreachable,
-            }
-            i += 1;
-        }
-        if (count != group) {
-            return false;
-        }
-    }
-
-    while (i < damaged.len) {
-        switch (damaged[i]) {
-            '#' => return false,
-            '?' => {
-                if (bitAsBool(broken, @intCast(broken_i))) {
-                    return false;
-                }
-                broken_i += 1;
-            },
-            else => {},
-        }
-        i += 1;
-    }
-
-    return std.mem.count(u8, damaged[i..], "#") == 0;
-}
-
-fn bitAsBool(x: usize, index: u6) bool {
-    return (x >> index) & 0x1 == 1;
-}
-
-const expect = std.testing.expect;
-
-test "correct" {
-    try expect(correct("???.###", 0b101, &.{ 1, 1, 3 }));
-    try expect(correct(".??..??...?##.", 0b10101, &.{ 1, 1, 3 }));
-    try expect(!correct("#?#", 0b1, &.{ 1, 1 }));
-    try expect(!correct("?###????????", 0b0, &.{ 3, 2, 1 }));
 }
