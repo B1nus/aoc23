@@ -1,3 +1,4 @@
+// Maybe a recursive solution would be better. But I just realeized a way to optimize this version.
 const std = @import("std");
 const print = std.debug.print;
 
@@ -12,6 +13,7 @@ pub fn main() !void {
     while (lines.next()) |line| {
         if (line.len == 0) continue;
 
+        // print("unparsed: {s}\n", .{line});
         const parsed = try Line.from_line(line, allocator);
         sum += try parsed.count_configurations(allocator);
         line_num += 1;
@@ -84,11 +86,11 @@ const Line = struct {
             const unknown = (self.unknown >> shift) & 1 == 1;
 
             if (broken) {
-                print(".", .{});
+                print("#", .{});
             } else if (unknown) {
                 print("?", .{});
             } else {
-                print("#", .{});
+                print(".", .{});
             }
         }
         print(" {d}", .{self.lengths[0]});
@@ -103,14 +105,43 @@ const Line = struct {
         defer pos_iter.deinit();
 
         var configuration_count: usize = 0;
+        // self.print_line();
         while (pos_iter.next()) |pos_conf| {
             // pos_iter.print_position_configuration();
-            const configuration_bits = position_config_to_bits(pos_conf, self.lengths, self.length);
-            if (self.try_configuration(configuration_bits)) {
+            const skip_ = self.skip(pos_conf);
+            if (skip_ == 0 and self.try_configuration(position_config_to_bits(pos_conf, self.lengths, self.length))) {
                 configuration_count += 1;
+            } else {
+                pos_iter.skip(skip_) catch {
+                    return configuration_count;
+                };
             }
         }
         return configuration_count;
+    }
+
+    pub fn skip(self: Line, con_pos: []usize) usize {
+        var j: usize = 0;
+        for (0..self.length) |i| {
+            if ((i >= con_pos[j] and i < con_pos[j] + self.lengths[j])) {
+                if (((self.broken ^ self.unknown) << @intCast(i)) >> @intCast(self.length - 1) != 1) {
+                    return j;
+                }
+            } else if ((self.broken << @intCast(i)) >> @intCast(self.length - 1) == 1) {
+                if (i <= con_pos[j] + self.lengths[j]) {
+                    return j;
+                } else {
+                    return j - 1;
+                }
+            }
+            if (i >= con_pos[j] + self.lengths[j]) {
+                if ((self.broken << @intCast(i)) >> @intCast(self.length - 1) == 1) {
+                    return j;
+                }
+                j += 1;
+            }
+        }
+        return 0;
     }
 
     pub fn try_configuration(self: Line, configuration_bits: u128) bool {
@@ -170,15 +201,13 @@ const PositionIterator = struct {
         self.positions[self.positions.len - 1] -= 1;
         var depth: usize = 0;
         while (depth + 1 <= self.lengths.len) {
-            if (self.positions[self.positions.len - 2] + self.lengths[self.positions.len - 2] == self.positions[self.positions.len - 1]) {
+            if (self.positions[self.positions.len - 2] + self.lengths[self.positions.len - 2] >= self.positions[self.positions.len - 1]) {
                 if (depth + 2 > self.positions.len) {
                     return null;
                 }
-                self.positions[self.positions.len - 2 - depth] += 1;
-                self.positions[self.positions.len - 1] = self.length - self.lengths[self.lengths.len - 1];
-                for (0..depth) |i| {
-                    self.positions[self.positions.len - 2 - depth + i + 1] = self.positions[self.positions.len - 2 - depth + i] + self.lengths[self.lengths.len - 2 - depth + i] + 1;
-                }
+                self.skip(self.positions.len - 2 - depth) catch {
+                    return null;
+                };
                 depth += 1;
                 if (depth > self.depth) {
                     self.depth = depth;
@@ -191,6 +220,14 @@ const PositionIterator = struct {
             return null;
         }
         return pos_conf;
+    }
+
+    pub fn skip(self: PositionIterator, index: usize) !void {
+        self.positions[index] += 1;
+        self.positions[self.positions.len - 1] = self.length - self.lengths[self.lengths.len - 1];
+        for (0..(self.positions.len - 2 - index)) |i| {
+            self.positions[index + i + 1] = self.positions[index + i] + self.lengths[index + i] + 1;
+        }
     }
 
     pub fn deinit(self: PositionIterator) void {
