@@ -24,7 +24,7 @@ pub fn main() !void {
         const state = queue.pop();
         const heat, const move = .{ state.heat, state.move };
 
-        if (move.x == width - 1 and move.y == height - 1) {
+        if (move.x == width - 1 and move.y == height - 1 and move.steps >= 4) {
             print("Day 17 >> {d}\n", .{heat});
             return;
         }
@@ -34,31 +34,55 @@ pub fn main() !void {
 
         try seen.put(move, void{});
 
-        if (move.steps < 3) {
+        // print("steps:{d}\n", .{move.steps});
+        if (move.steps < 10) {
             if (move.dir.new_pos(move.x, move.y, width, height)) |new_pos_| {
                 const nx, const ny = .{ new_pos_.x, new_pos_.y };
                 try push(&queue, State.new(nx, ny, move.dir, move.steps + 1, heat + grid[nx + ny * width]));
+            } else {
+                // print("Outside! x:{d} y:{d} dir:{any}\n", .{ move.x, move.y, move.dir });
             }
         }
 
-        switch (move.dir) {
-            .Up, .Down => {
-                if (move.x > 0) {
-                    try push(&queue, State.new(move.x - 1, move.y, Direction.Left, 1, heat + grid[move.x - 1 + move.y * width]));
-                }
-                if (move.x < width - 1) {
-                    try push(&queue, State.new(move.x + 1, move.y, Direction.Right, 1, heat + grid[move.x + 1 + move.y * width]));
-                }
-            },
-            .Left, .Right => {
-                if (move.y > 0) {
-                    try push(&queue, State.new(move.x, move.y - 1, Direction.Up, 1, heat + grid[move.x + (move.y - 1) * width]));
-                }
-                if (move.y < height - 1) {
-                    try push(&queue, State.new(move.x, move.y + 1, Direction.Down, 1, heat + grid[move.x + (move.y + 1) * width]));
-                }
-            },
+        if (move.steps >= 4) {
+            switch (move.dir) {
+                .Up, .Down => {
+                    if (move.x > 4) {
+                        try push(&queue, State.new(move.x - 4, move.y, Direction.Left, 4, heat + grid[move.x - 4 + move.y * width] + grid[move.x - 3 + move.y * width] + grid[move.x - 2 + move.y * width] + grid[move.x - 1 + move.y * width]));
+                    }
+                    if (move.x < width - 4) {
+                        try push(&queue, State.new(move.x + 4, move.y, Direction.Right, 4, heat + grid[move.x + 4 + move.y * width] + grid[move.x + 3 + move.y * width] + grid[move.x + 2 + move.y * width] + grid[move.x + 1 + move.y * width]));
+                    }
+                },
+                .Left, .Right => {
+                    if (move.y > 4) {
+                        try push(&queue, State.new(move.x, move.y - 4, Direction.Up, 4, heat + grid[move.x + (move.y - 4) * width] + grid[move.x + (move.y - 3) * width] + grid[move.x + (move.y - 2) * width] + grid[move.x + (move.y - 1) * width]));
+                    }
+                    if (move.y < height - 4) {
+                        try push(&queue, State.new(move.x, move.y + 4, Direction.Down, 4, heat + grid[move.x + (move.y + 4) * width] + grid[move.x + (move.y + 3) * width] + grid[move.x + (move.y + 2) * width] + grid[move.x + (move.y + 1) * width]));
+                    }
+                },
+            }
         }
+
+        // _ = try std.io.getStdIn().reader().readByte();
+        //
+        // for (grid, 0..) |h, i| {
+        //     if (move.x + move.y * width == i) {
+        //         switch (move.dir) {
+        //             .Up => print("^", .{}),
+        //             .Down => print("v", .{}),
+        //             .Left => print("<", .{}),
+        //             .Right => print(">", .{}),
+        //         }
+        //     } else {
+        //         print("{d}", .{h});
+        //     }
+        //     if (i % width == width - 1) {
+        //         print("\n", .{});
+        //     }
+        // }
+        // print("\n", .{});
     }
 }
 
