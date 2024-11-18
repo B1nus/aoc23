@@ -2,40 +2,112 @@ const std = @import("std");
 
 pub fn main() !void {
     // Parse Input
-    var input = std.mem.splitSequence(u8, @embedFile("19.txt"), "\n\n");
-    var workflow_iter = std.mem.splitScalar(u8, input.next().?, '\n');
-    var part_iter = std.mem.splitScalar(u8, input.next().?, '\n');
+    var input = std.mem.splitScalar(u8, @embedFile("19.txt"), '\n');
 
     var workflows = std.StringHashMap(Workflow).init(std.heap.page_allocator);
-    while (workflow_iter.next()) |workflow_str| {
+    while (input.next()) |workflow_str| {
         if (workflow_str.len > 0) {
             const workflow = try Workflow.parse(workflow_str);
             try workflows.put(workflow.label, workflow);
+        } else {
+            break;
+        }
+    }
+
+    var accepted = std.ArrayList(State).init(std.heap.page_allocator);
+    var queue = std.ArrayList(State).init(std.heap.page_allocator);
+    try queue.append(State.default());
+
+    while (queue.popOrNull()) |state_| {
+        if (state_.label[0] == 'R') {
+            continue;
+        }
+        if (state_.label[0] == 'A') {
+            try accepted.append(state_);
+            continue;
+        }
+
+        const workflow = workflows.get(state_.label).?;
+
+        var state = state_;
+        for (workflow.rules) |rule_| {
+            if (rule_) |rule| {
+                if (rule.category == null) {
+                    try queue.append(state.change_label(rule.destination));
+                    break;
+                } else {
+                    if (rule.passing_range(state.range(rule.category.?))) |passing| {
+                        try queue.append(state.change_range(rule.category.?, passing).change_label(rule.destination));
+                    }
+                    if (rule.failing_range(state.range(rule.category.?))) |failing| {
+                        state = state.change_range(rule.category.?, failing);
+                    } else {
+                        break;
+                    }
+                }
+            }
         }
     }
 
     var sum: usize = 0;
-    while (part_iter.next()) |part_str| {
-        if (part_str.len > 0) {
-            const part = try Part.parse(part_str);
-            var destination = Destination{ .label = "in" };
-            // std.debug.print("{any}:", .{part});
-
-            while (destination == Destination.label) {
-                destination = workflows.get(destination.label).?.process_part(part);
-            }
-
-            if (destination == Destination.accepted) {
-                // std.debug.print(" -> A\n", .{});
-                sum += part.sum();
-            } else {
-                // std.debug.print(" -> R\n", .{});
-            }
-        }
+    for (accepted.items) |state| {
+        // std.debug.print("x: {d}..{d}, m: {d}..{d}, a: {d}..{d}, s: {d}..{d}\n", .{ state.x.min, state.x.max, state.m.min, state.m.max, state.a.min, state.a.max, state.s.min, state.s.max });
+        sum += state.x.length() * state.m.length() * state.a.length() * state.s.length();
     }
 
     std.debug.print("Day 19 >> {d}\n", .{sum});
 }
+
+const State = struct {
+    x: Range,
+    m: Range,
+    a: Range,
+    s: Range,
+    label: []const u8,
+
+    pub fn default() @This() {
+        return @This(){ .x = Range.default(), .m = Range.default(), .a = Range.default(), .s = Range.default(), .label = "in" };
+    }
+
+    pub fn range(self: @This(), category: Category) Range {
+        return switch (category) {
+            .Cool => self.x,
+            .Musical => self.m,
+            .Aerodynamic => self.a,
+            .Shiny => self.s,
+        };
+    }
+
+    pub fn change_range(self: @This(), category: Category, new_range: Range) @This() {
+        var new = self;
+        switch (category) {
+            .Cool => new.x = new_range,
+            .Musical => new.m = new_range,
+            .Aerodynamic => new.a = new_range,
+            .Shiny => new.s = new_range,
+        }
+        return new;
+    }
+
+    pub fn change_label(self: @This(), label: []const u8) @This() {
+        var new = self;
+        new.label = label;
+        return new;
+    }
+};
+
+const Range = struct {
+    min: usize,
+    max: usize,
+
+    pub fn default() @This() {
+        return @This(){ .min = 1, .max = 4000 };
+    }
+
+    pub fn length(self: @This()) usize {
+        return self.max - self.min + 1;
+    }
+};
 
 const Workflow = struct {
     rules: [5:null]?Rule,
@@ -56,19 +128,6 @@ const Workflow = struct {
         }
 
         return @This(){ .rules = rules, .label = label };
-    }
-
-    pub fn process_part(self: @This(), part: Part) Destination {
-        for (self.rules) |rule_| {
-            if (rule_) |rule| {
-                if (rule.process_part(part)) {
-                    return rule.destination;
-                } else {
-                    continue;
-                }
-            }
-        }
-        return Destination.accepted;
     }
 };
 
@@ -93,7 +152,7 @@ const Destination = union(enum) {
 const Rule = struct {
     category: ?Category,
     criteria: ?Criteria,
-    destination: Destination,
+    destination: []const u8,
 
     pub fn parse(text: []const u8) !Rule {
         if (std.mem.indexOfScalar(u8, text, ':')) |index_of_colon| {
@@ -113,62 +172,23 @@ const Rule = struct {
                 else => unreachable,
             };
 
-            const destination = switch (text[index_of_colon + 1]) {
-                'R' => Destination.rejected,
-                'A' => Destination.accepted,
-                else => Destination{ .label = text[index_of_colon + 1 ..] },
-            };
-
-            return @This(){ .category = category, .criteria = criteria, .destination = destination };
+            return @This(){ .category = category, .criteria = criteria, .destination = text[index_of_colon + 1 ..] };
         } else {
-            const destination = switch (text[0]) {
-                'R' => Destination.rejected,
-                'A' => Destination.accepted,
-                else => Destination{ .label = text },
-            };
-            return @This(){ .category = null, .criteria = null, .destination = destination };
+            return @This(){ .category = null, .criteria = null, .destination = text };
         }
     }
 
-    pub fn process_part(self: @This(), part: Part) bool {
-        if (self.category) |category| {
-            const measure = switch (category) {
-                .Cool => part.x,
-                .Musical => part.m,
-                .Aerodynamic => part.a,
-                .Shiny => part.s,
-            };
-
-            if (self.criteria) |criteria| {
-                switch (criteria) {
-                    Criteria.more_than => |n| return measure > n,
-                    Criteria.less_than => |n| return measure < n,
-                }
-            }
-        }
-
-        return true;
-    }
-};
-
-const Part = struct {
-    x: usize,
-    m: usize,
-    a: usize,
-    s: usize,
-
-    pub fn parse(line: []const u8) !@This() {
-        var parts = std.mem.splitScalar(u8, line[1 .. line.len - 1], ',');
-
-        const x = try std.fmt.parseInt(usize, parts.next().?[2..], 10);
-        const m = try std.fmt.parseInt(usize, parts.next().?[2..], 10);
-        const a = try std.fmt.parseInt(usize, parts.next().?[2..], 10);
-        const s = try std.fmt.parseInt(usize, parts.next().?[2..], 10);
-
-        return @This(){ .x = x, .m = m, .a = a, .s = s };
+    pub fn passing_range(self: @This(), range: Range) ?Range {
+        return switch (self.criteria.?) {
+            .less_than => |n| if (range.min > n) null else if (range.max >= n) Range{ .min = range.min, .max = n - 1 } else range,
+            .more_than => |n| if (range.max < n) null else if (range.min <= n) Range{ .min = n + 1, .max = range.max } else range,
+        };
     }
 
-    pub fn sum(self: @This()) usize {
-        return self.x + self.m + self.a + self.s;
+    pub fn failing_range(self: @This(), range: Range) ?Range {
+        return switch (self.criteria.?) {
+            .less_than => |n| if (range.max >= n and range.min < n) Range{ .min = n, .max = range.max } else if (range.min >= n) range else null,
+            .more_than => |n| if (range.min <= n and range.max > n) Range{ .min = range.min, .max = n } else if (range.max <= n) range else null,
+        };
     }
 };
