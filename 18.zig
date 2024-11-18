@@ -1,96 +1,56 @@
 const std = @import("std");
 
 pub fn main() !void {
-    var x: isize = 0;
-    var y: isize = 0;
+    // Welp, I cheated again. Sorry: https://www.youtube.com/watch?v=bGWK76_e-LM&t=250s
+    //
+    // I'm using the shoelace theorem and Rick's theorem. I did however find a slight
+    // optimisation in the shoelace theorem for our data. I skip every other vertex, I figured
+    // it out by working it out on paper. I probably wouldn't have discovered the shoelace theorem
+    // myself, but it is quite easy to understand if you look at the pictures from wikipedia.
+    const allocator = std.heap.page_allocator;
+    var x = std.ArrayList(isize).init(allocator);
+    var y = std.ArrayList(isize).init(allocator);
+    try x.append(0);
+    try y.append(0);
 
-    var min_x: isize = 0xFFFFFFFF;
-    var max_x: isize = 0;
-    var min_y: isize = 0xFFFFFFFF;
-    var max_y: isize = 0;
-
+    // Counting boundary points for pick's theorem later.
+    var b: usize = 1;
     var lines = std.mem.splitScalar(u8, @embedFile("18.txt"), '\n');
     while (lines.next()) |line| {
         if (line.len > 0) {
-            var line_parts = std.mem.splitScalar(u8, line, ' ');
-            const direction = line_parts.next().?[0];
-            const steps = @as(isize, @intCast(try std.fmt.parseInt(usize, line_parts.next().?, 10)));
-            // const color = try std.fmt.parseInt(u24, line_parts.next().?[2..8], 16);
+            const color_i = std.mem.indexOfScalar(u8, line, '#').? + 1;
+            const color = line[color_i .. line.len - 1];
+            const direction = color[5];
+            const steps = try std.fmt.parseInt(usize, color[0..5], 16);
 
+            var dx: isize = 0;
+            var dy: isize = 0;
             switch (direction) {
-                'U' => y -= steps,
-                'D' => y += steps,
-                'L' => x -= steps,
-                'R' => x += steps,
+                '3' => dy = -1,
+                '2' => dx = -1,
+                '1' => dy = 1,
+                '0' => dx = 1,
                 else => unreachable,
             }
 
-            min_x = @min(min_x, x);
-            max_x = @max(max_x, x);
-            min_y = @min(min_y, y);
-            max_y = @max(max_y, y);
+            b += steps;
+
+            try x.append(x.getLast() + dx * @as(isize, @intCast(steps)));
+            try y.append(y.getLast() + dy * @as(isize, @intCast(steps)));
         }
     }
 
-    const width = @abs(max_x - min_x) + 1;
-    const height = @abs(max_y - min_y) + 1;
-
-    var visited = try std.heap.page_allocator.alloc(bool, width * height);
-    @memset(visited, false);
-
-    var x_: usize = @abs(min_x);
-    var y_: usize = @abs(min_y);
-    visited[x_ + y_ * width] = true;
-    var lines2 = std.mem.splitScalar(u8, @embedFile("18.txt"), '\n');
-    while (lines2.next()) |line| {
-        if (line.len > 0) {
-            var line_parts = std.mem.splitScalar(u8, line, ' ');
-            const direction = line_parts.next().?[0];
-            const steps = try std.fmt.parseInt(usize, line_parts.next().?, 10);
-
-            for (0..steps) |_| {
-                switch (direction) {
-                    'U' => y_ -= 1,
-                    'D' => y_ += 1,
-                    'L' => x_ -= 1,
-                    'R' => x_ += 1,
-                    else => unreachable,
-                }
-                visited[x_ + y_ * width] = true;
-            }
-        }
+    // Shoelace Theorem
+    const n: usize = x.items.len;
+    var A_: isize = 0;
+    for (0..n / 2) |i_| {
+        const i = i_ * 2; // Index every other vertex. (This is my optimisation)
+        const dy = y.items[(i + n - 1) % n] - y.items[(i + 1) % n];
+        A_ += dy * x.items[i];
     }
+    const A = @as(usize, @abs(A_)); // Don't divide by halv, this is because of my optimisation.
 
-    var to_check = std.ArrayList(usize).init(std.heap.page_allocator);
-    try to_check.append(width / 2 + height / 2 * width);
-    while (to_check.items.len > 0) {
-        var new = std.ArrayList(usize).init(std.heap.page_allocator);
-        for (to_check.items) |id| {
-            if (!visited[id]) {
-                visited[id] = true;
-                try new.append(id + 1);
-                try new.append(id - 1);
-                try new.append(id - width);
-                try new.append(id + width);
-            }
-        }
-        to_check.clearRetainingCapacity();
-        try to_check.appendSlice(new.items);
-        new.clearAndFree();
-    }
+    const i = A + b / 2 + 1;
 
-    var sum: usize = 0;
-    for (0..height) |h| {
-        for (0..width) |w| {
-            if (visited[w + h * width]) {
-                // std.debug.print("#", .{});
-                sum += 1;
-            } else {
-                // std.debug.print(".", .{});
-            }
-        }
-        // std.debug.print("\n", .{});
-    }
-
-    std.debug.print("Day 18 >> {d}\n", .{sum});
+    std.debug.print("Day 18 >> {d}\n", .{i});
 }
