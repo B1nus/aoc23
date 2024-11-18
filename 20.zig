@@ -74,19 +74,23 @@ pub fn main() !void {
     // }
     // std.debug.print("\nPulses:\n", .{});
 
-    var high_pulses: usize = 0;
-    var low_pulses: usize = 0;
-    for (0..1000) |_| {
+    var presses: usize = 0;
+    var update: usize = 0;
+    outer: while (true) {
         var pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
+        defer pulses.deinit();
         try pulses.append(Pulse{ .from = "button", .to = "broadcaster", .high = false });
+        presses += 1;
         while (pulses.items.len > 0) {
             var new_pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
+            defer new_pulses.deinit();
             for (pulses.items) |pulse| {
                 if (pulse.high) {
-                    high_pulses += 1;
                     // std.debug.print("{s} -high-> {s}\n", .{ pulse.from, pulse.to });
                 } else {
-                    low_pulses += 1;
+                    if (pulse.to[0] == 'r' and pulse.to[1] == 'x') {
+                        break :outer;
+                    }
                     // std.debug.print("{s} -low-> {s}\n", .{ pulse.from, pulse.to });
                 }
                 if (modules.getPtr(pulse.to)) |mod| {
@@ -128,9 +132,13 @@ pub fn main() !void {
             pulses.clearAndFree();
             try pulses.appendSlice(new_pulses.items);
         }
+        update += 1;
+        if (update == 10000) {
+            update = 0;
+            std.debug.print("{d} cl:{}, rp:{}, lb:{}, nj:{}\n", .{ presses, memory.get("cl").?, memory.get("rp").?, memory.get("lb").?, memory.get("nj").? });
+        }
     }
-
-    std.debug.print("Day 20 >> {d}\n", .{low_pulses * high_pulses});
+    std.debug.print("Day 20 >> {d}\n", .{presses});
 }
 
 const Pulse = struct {
