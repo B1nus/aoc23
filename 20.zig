@@ -1,11 +1,25 @@
 const std = @import("std");
-const input = @embedFile("20.txt");
 
 pub fn main() !void {
+    // Please note that I cheated again. I took help from a video on the problem from @programmingproblems on youtube. They have great videos on the problems.
+
+    var prod: usize = 1;
+    for ([_][]const u8{ "cl", "rp", "lb", "nj" }) |in| {
+        var modules, const outputs, const inputs, var memory = try parse_input(@embedFile("20.txt"));
+        defer modules.deinit();
+        defer memory.deinit();
+        const cycle = try button_presses(&modules, outputs, inputs, &memory, in, false);
+        std.debug.print("{s} {d} \n\n", .{ in, cycle });
+        prod *= lcm(prod, cycle);
+    }
+    std.debug.print("Day 20 >> {d}\n", .{prod});
+}
+
+pub fn parse_input(input: []const u8) !struct { std.StringHashMap(Module), std.StringHashMap([][]const u8), std.StringHashMap([][]const u8), std.StringHashMap(?bool) } {
     var modules = std.StringHashMap(Module).init(std.heap.page_allocator);
     var outputs = std.StringHashMap([][]const u8).init(std.heap.page_allocator);
     var inputs = std.StringHashMap([][]const u8).init(std.heap.page_allocator);
-    var memory = std.StringHashMap(bool).init(std.heap.page_allocator);
+    var memory = std.StringHashMap(?bool).init(std.heap.page_allocator);
 
     try modules.put("button", Module.button);
     var slice: [][]const u8 = try std.heap.page_allocator.alloc([]const u8, 1);
@@ -53,92 +67,79 @@ pub fn main() !void {
             };
             try modules.put(label, module);
             try outputs.put(label, labels);
-            try memory.put(label, false);
+            try memory.put(label, null);
         }
     }
 
-    // var o_iter = outputs.iterator();
-    // while (o_iter.next()) |entry| {
-    //     const label = entry.key_ptr.*;
-    //     const outputs_ = entry.value_ptr.*;
-    //     const inputs_ = inputs.get(label).?;
-    //     std.debug.print("{s}", .{inputs_[0]});
-    //     for (inputs_[1..]) |input_l| {
-    //         std.debug.print(", {s}", .{input_l});
-    //     }
-    //     std.debug.print(" -> {s} -> {s}", .{ label, outputs_[0] });
-    //     for (outputs_[1..]) |out| {
-    //         std.debug.print(", {s}", .{out});
-    //     }
-    //     std.debug.print("\n", .{});
-    // }
-    // std.debug.print("\nPulses:\n", .{});
+    return .{ modules, outputs, inputs, memory };
+}
 
-    var presses: usize = 0;
-    var update: usize = 0;
-    outer: while (true) {
-        var pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
-        defer pulses.deinit();
-        try pulses.append(Pulse{ .from = "button", .to = "broadcaster", .high = false });
-        presses += 1;
-        while (pulses.items.len > 0) {
-            var new_pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
-            defer new_pulses.deinit();
-            for (pulses.items) |pulse| {
-                if (pulse.high) {
-                    // std.debug.print("{s} -high-> {s}\n", .{ pulse.from, pulse.to });
-                } else {
-                    if (pulse.to[0] == 'r' and pulse.to[1] == 'x') {
-                        break :outer;
-                    }
-                    // std.debug.print("{s} -low-> {s}\n", .{ pulse.from, pulse.to });
-                }
-                if (modules.getPtr(pulse.to)) |mod| {
-                    switch (mod.*) {
-                        .button => unreachable,
-                        .broadcaster => {
+pub fn button_presses(modules: *std.StringHashMap(Module), outputs: std.StringHashMap([][]const u8), inputs: std.StringHashMap([][]const u8), memory: *std.StringHashMap(?bool), label: []const u8, pulse: bool) !usize {
+    var count: usize = 0;
+    while (memory.get(label).? == null or memory.get(label).? != pulse) : (count += 1) {
+        try press_button(modules, outputs, inputs, memory);
+    }
+    var it = memory.keyIterator();
+    while (it.next()) |l| {
+        std.debug.print("{s} {any}\n", .{ l.*, memory.get(l.*).? });
+    }
+    return count;
+}
+
+pub fn press_button(modules: *std.StringHashMap(Module), outputs: std.StringHashMap([][]const u8), inputs: std.StringHashMap([][]const u8), memory: *std.StringHashMap(?bool)) !void {
+    var pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
+    defer pulses.deinit();
+    try pulses.append(Pulse{ .from = "button", .to = "broadcaster", .high = false });
+    while (pulses.items.len > 0) {
+        var new_pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
+        defer new_pulses.deinit();
+        for (pulses.items) |pulse| {
+            if (modules.getPtr(pulse.to)) |mod| {
+                switch (mod.*) {
+                    .button => unreachable,
+                    .broadcaster => {
+                        for (outputs.get(pulse.to).?) |out| {
+                            try new_pulses.append(Pulse{ .from = pulse.to, .to = out, .high = pulse.high });
+                        }
+                        try memory.put(pulse.to, false);
+                    },
+                    .flip_flop => |*on| {
+                        if (!pulse.high) {
+                            on.* = !on.*;
                             for (outputs.get(pulse.to).?) |out| {
-                                try new_pulses.append(Pulse{ .from = pulse.to, .to = out, .high = pulse.high });
+                                try new_pulses.append(Pulse{ .from = pulse.to, .to = out, .high = on.* });
                             }
-                            try memory.put(pulse.to, false);
-                        },
-                        .flip_flop => |*on| {
-                            if (!pulse.high) {
-                                on.* = !on.*;
-                                for (outputs.get(pulse.to).?) |out| {
-                                    try new_pulses.append(Pulse{ .from = pulse.to, .to = out, .high = on.* });
-                                }
-                                try memory.put(pulse.to, on.*);
-                            }
-                        },
-                        .conjunction => |_| {
-                            var all_high = true;
-                            for (inputs.get(pulse.to).?) |in| {
-                                if (!memory.get(in).?) {
+                            try memory.put(pulse.to, on.*);
+                        }
+                    },
+                    .conjunction => |_| {
+                        var all_high = true;
+                        for (inputs.get(pulse.to).?) |in| {
+                            if (memory.get(in).?) |mem| {
+                                if (!mem) {
                                     all_high = false;
                                     break;
                                 }
                             }
+                        }
 
-                            for (outputs.get(pulse.to).?) |out| {
-                                try new_pulses.append(Pulse{ .from = pulse.to, .to = out, .high = !all_high });
-                            }
-                            try memory.put(pulse.to, !all_high);
-                        },
-                    }
+                        for (outputs.get(pulse.to).?) |out| {
+                            try new_pulses.append(Pulse{ .from = pulse.to, .to = out, .high = !all_high });
+                        }
+                        try memory.put(pulse.to, !all_high);
+                    },
                 }
             }
+        }
 
-            pulses.clearAndFree();
-            try pulses.appendSlice(new_pulses.items);
-        }
-        update += 1;
-        if (update == 10000) {
-            update = 0;
-            std.debug.print("{d} cl:{}, rp:{}, lb:{}, nj:{}\n", .{ presses, memory.get("cl").?, memory.get("rp").?, memory.get("lb").?, memory.get("nj").? });
-        }
+        pulses.clearAndFree();
+        try pulses.appendSlice(new_pulses.items);
     }
-    std.debug.print("Day 20 >> {d}\n", .{presses});
+}
+
+// Least common multiple
+pub fn lcm(a: usize, b: usize) usize {
+    return a * b / std.math.gcd(a, b);
 }
 
 const Pulse = struct {
