@@ -2,17 +2,28 @@ const std = @import("std");
 
 pub fn main() !void {
     // Please note that I cheated again. I took help from a video on the problem from @programmingproblems on youtube. They have great videos on the problems.
+    // var prod: usize = 1;
+    var modules, const outputs, const inputs, var memory = try parse_input(@embedFile("20.txt"));
+    _ = try button_presses(&modules, outputs, inputs, &memory, "", false);
+    // for (try find_parent_parents(inputs, "rx")) |in| {
+    //     var modules, _, _, var memory = try parse_input(@embedFile("20.txt"));
+    //     defer modules.deinit();
+    //     defer memory.deinit();
+    //     const cycle = try button_presses(&modules, outputs, inputs, &memory, in, false);
+    //     std.debug.print("{s} {d} \n\n", .{ in, cycle });
+    //     prod *= lcm(prod, cycle);
+    // }
+    // std.debug.print("Day 20 >> {d}\n", .{prod});
+}
 
-    var prod: usize = 1;
-    for ([_][]const u8{ "cl", "rp", "lb", "nj" }) |in| {
-        var modules, const outputs, const inputs, var memory = try parse_input(@embedFile("20.txt"));
-        defer modules.deinit();
-        defer memory.deinit();
-        const cycle = try button_presses(&modules, outputs, inputs, &memory, in, false);
-        std.debug.print("{s} {d} \n\n", .{ in, cycle });
-        prod *= lcm(prod, cycle);
+pub fn find_parent_parents(inputs: std.StringHashMap([][]const u8), label: []const u8) ![][]const u8 {
+    const parent = inputs.get(label).?[0];
+    const parent_parents = inputs.get(parent).?;
+    var parent_parent_parents = std.ArrayList([]const u8).init(std.heap.page_allocator);
+    for (parent_parents) |parent_parent| {
+        try parent_parent_parents.appendSlice(inputs.get(parent_parent).?);
     }
-    std.debug.print("Day 20 >> {d}\n", .{prod});
+    return parent_parent_parents.items;
 }
 
 pub fn parse_input(input: []const u8) !struct { std.StringHashMap(Module), std.StringHashMap([][]const u8), std.StringHashMap([][]const u8), std.StringHashMap(?bool) } {
@@ -76,17 +87,22 @@ pub fn parse_input(input: []const u8) !struct { std.StringHashMap(Module), std.S
 
 pub fn button_presses(modules: *std.StringHashMap(Module), outputs: std.StringHashMap([][]const u8), inputs: std.StringHashMap([][]const u8), memory: *std.StringHashMap(?bool), label: []const u8, pulse: bool) !usize {
     var count: usize = 0;
-    while (memory.get(label).? == null or memory.get(label).? != pulse) : (count += 1) {
-        try press_button(modules, outputs, inputs, memory);
+    var low_pulses: usize = 0;
+    var high_pulses: usize = 0;
+    while (count < 1000) : (count += 1) {
+        try press_button(modules, outputs, inputs, memory, &high_pulses, &low_pulses);
     }
-    var it = memory.keyIterator();
-    while (it.next()) |l| {
-        std.debug.print("{s} {any}\n", .{ l.*, memory.get(l.*).? });
-    }
+    std.debug.print("{d}\n", .{low_pulses * high_pulses});
+    _ = label;
+    _ = pulse;
+    // var it = memory.keyIterator();
+    // while (it.next()) |l| {
+    //     std.debug.print("{s} {any}\n", .{ l.*, memory.get(l.*).? });
+    // }
     return count;
 }
 
-pub fn press_button(modules: *std.StringHashMap(Module), outputs: std.StringHashMap([][]const u8), inputs: std.StringHashMap([][]const u8), memory: *std.StringHashMap(?bool)) !void {
+pub fn press_button(modules: *std.StringHashMap(Module), outputs: std.StringHashMap([][]const u8), inputs: std.StringHashMap([][]const u8), memory: *std.StringHashMap(?bool), high_pulses: *usize, low_pulses: *usize) !void {
     var pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
     defer pulses.deinit();
     try pulses.append(Pulse{ .from = "button", .to = "broadcaster", .high = false });
@@ -94,6 +110,8 @@ pub fn press_button(modules: *std.StringHashMap(Module), outputs: std.StringHash
         var new_pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
         defer new_pulses.deinit();
         for (pulses.items) |pulse| {
+            if (pulse.high) high_pulses.* += 1;
+            if (!pulse.high) low_pulses.* += 1;
             if (modules.getPtr(pulse.to)) |mod| {
                 switch (mod.*) {
                     .button => unreachable,
