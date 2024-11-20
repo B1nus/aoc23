@@ -3,94 +3,136 @@ const std = @import("std");
 // So, the pattern is a large diamons shape. The idea is to Emulate steps to account
 // for the corners and edges and keep track of how many filled grids there are.
 pub fn main() !void {
-    const steps = try std.fmt.parseInt(usize, (try std.process.argsAlloc(std.heap.page_allocator))[1], 10);
-    var grid = try Grid.parse_grid(@embedFile("21.txt"));
+    const steps, const size = try parse_args(std.os.argv);
+    var grid = try Grid.parse_grid(@embedFile("21.txt"), std.heap.page_allocator);
 
     // I don't need to do all parts separetly. I can just do one big step simulation and
     // Then pick out ranges and multiply them to get the answer.
     //
     // Hmm, how big does it have to be?
-    if (steps > grid.width * 3) {
-        _ = try grid.take_steps(.{ grid.width >> 1, grid.height >> 1 }, 10);
-        std.debug.print("{d} spots", .{grid.plots.count()});
-    } else {
-        _ = try grid.take_steps(.{ grid.width >> 1, grid.height >> 1 }, steps);
-        std.debug.print("{d} spots", .{grid.plots.count()});
-    }
+    try grid.take_steps(Point.new(0, 0), steps);
+    std.debug.print("{d} spots", .{grid.count_reach(-100, 100, -100, 100)});
+    grid.print("", size);
 }
+
+const Point = struct {
+    x: isize,
+    y: isize,
+
+    pub fn in_range(self: @This(), min_x: isize, max_x: isize, min_y: isize, max_y: isize) bool {
+        return self.x >= min_x and self.x <= max_x and self.y >= min_y and self.y <= max_y;
+    }
+
+    pub fn new(x: isize, y: isize) @This() {
+        return @This(){ .x = x, .y = y };
+    }
+};
+
+const Set = struct {
+    hash: std.AutoHashMap(Point, void),
+    later: std.ArrayList(Point),
+
+    pub fn new(allocator: std.mem.Allocator) @This() {
+        return @This(){ .hash = std.AutoHashMap(Point, void).init(allocator), .later = std.ArrayList(Point).init(allocator) };
+    }
+
+    pub fn has(self: @This(), point: Point) bool {
+        return self.hash.get(point) != null;
+    }
+
+    pub fn put(self: *@This(), item: Point) !void {
+        try self.hash.put(item, void{});
+    }
+
+    pub fn delay_put(self: *@This(), item: Point) !void {
+        try self.later.append(item);
+    }
+
+    pub fn clear(self: *@This()) void {
+        self.hash.clearAndFree();
+    }
+
+    pub fn apply(self: *@This()) !void {
+        while (self.later.popOrNull()) |p| {
+            try self.put(p);
+        }
+        self.later.clearAndFree();
+    }
+
+    pub fn iterator(self: @This()) std.AutoHashMap(Point, void).KeyIterator {
+        return self.hash.keyIterator();
+    }
+};
 
 const Grid = struct {
     chars: []const u8,
-    width: isize,
-    height: isize,
-    plots: std.AutoHashMap([2]isize, void),
+    size: usize,
+    reach: Set,
 
-    pub fn parse_grid(input: []const u8) !@This() {
+    pub fn parse_grid(input: []const u8, allocator: std.mem.Allocator) !@This() {
         var lines = std.mem.splitScalar(u8, input, '\n');
-        const width: isize = @intCast(lines.peek().?.len);
-        const height: isize = @divFloor(@as(isize, @intCast(input.len + 1)), (width + 1));
-        var grid = try std.heap.page_allocator.alloc(u8, @intCast(width * height));
+        const size = lines.peek().?.len;
+        var grid = try allocator.alloc(u8, size * size);
         var i: usize = 0;
         while (lines.next()) |line| {
             std.mem.copyForwards(u8, grid[i..], line);
-            i += @intCast(width);
+            i += size;
         }
         return @This(){
             .chars = grid,
-            .width = width,
-            .height = height,
-            .plots = std.AutoHashMap([2]isize, void).init(std.heap.page_allocator),
+            .size = size,
+            .reach = Set.new(allocator),
         };
     }
 
-    pub fn count(self: Grid, min_x: isize, max_x: isize, min_y: isize, max_y: isize) usize {
-        var it = self.plots.keyIterator();
+    pub fn count_reach(self: Grid, min_x: isize, max_x: isize, min_y: isize, max_y: isize) usize {
+        var it = self.reach.iterator();
         var count: usize = 0;
-        while (it.next()) |i| {
-            if (i.*[0] <= max_x and i.*[0] >= min_x and i.*[])
+        while (it.next()) |p| {
+            if (p.in_range(min_x, max_x, min_y, max_y)) count += 1;
         }
+        return count;
     }
 
     // Take steps and return the count of plots
-    pub fn take_steps(self: *Grid, start: [2]isize, steps: usize) !u128 {
-        self.plots.clearAndFree();
-        try self.plots.put(start, void{});
+    pub fn take_steps(self: *Grid, start: Point, steps: usize) !void {
+        try self.reach.put(start);
         for (0..steps) |_| {
-            var new_plots = std.AutoHashMap([2]isize, void).init(std.heap.page_allocator);
-            defer new_plots.deinit();
-            var plots_iter = self.plots.keyIterator();
-            while (plots_iter.next()) |plot| {
-                const x, const y = plot.*;
-                if (self.get_char(x - 1, y) != '#') try new_plots.put(.{ x - 1, y }, void{});
-                if (self.get_char(x + 1, y) != '#') try new_plots.put(.{ x + 1, y }, void{});
-                if (self.get_char(x, y + 1) != '#') try new_plots.put(.{ x, y + 1 }, void{});
-                if (self.get_char(x, y - 1) != '#') try new_plots.put(.{ x, y - 1 }, void{});
+            var reach_iter = self.reach.iterator();
+            while (reach_iter.next()) |reach| {
+                const x, const y = .{ reach.x, reach.y };
+                if (self.get_char(x - 1, y) != '#') try self.reach.delay_put(Point.new(x - 1, y));
+                if (self.get_char(x + 1, y) != '#') try self.reach.delay_put(Point.new(x + 1, y));
+                if (self.get_char(x, y + 1) != '#') try self.reach.delay_put(Point.new(x, y + 1));
+                if (self.get_char(x, y - 1) != '#') try self.reach.delay_put(Point.new(x, y - 1));
             }
-            self.plots.clearAndFree();
-            self.plots = try new_plots.clone();
+            self.reach.clear();
+            try self.reach.apply();
         }
-        return @intCast(self.plots.count());
     }
 
     pub fn get_char(self: *Grid, x: isize, y: isize) u8 {
-        return self.chars[@intCast(@mod(x, self.width) + @mod(y, self.height) * self.width)];
+        const size: isize = @intCast(self.size);
+        const size_half: isize = @intCast(self.size / 2);
+        return self.chars[@intCast(@mod(x + size_half, size) + @mod(y + size_half, size) * size)];
     }
 
-    pub fn is_plot(self: Grid, x: isize, y: isize) bool {
-        return self.plots.get(.{ x, y }) != null;
+    pub fn is_plot(self: Grid, point: Point) bool {
+        return self.reach.has(point);
     }
 
     pub fn print(self: *Grid, label: []const u8, size: usize) void {
         std.debug.print("\x1b[1m{s}:\x1b[0m\n", .{label});
-        for (0..size * @as(usize, @intCast(self.height))) |ty| {
-            for (0..size * @as(usize, @intCast(self.width))) |tx| {
-                const x = @as(isize, @intCast(tx)) - self.width * (@as(isize, @intCast(size)) >> 1);
-                const y = @as(isize, @intCast(ty)) - self.height * (@as(isize, @intCast(size)) >> 1);
-                if (x == self.width >> 1 or y == self.height >> 1) {
+        const offset: isize = @intCast(size * self.size / 2);
+        for (0..size * self.size) |y_| {
+            for (0..size * self.size) |x_| {
+                const x = @as(isize, @intCast(x_)) - offset;
+                const y = @as(isize, @intCast(y_)) - offset;
+                if (x == 0 or y == 0) {
                     std.debug.print("\x1b[31m", .{});
                 }
-                if (self.is_plot(x, y)) {
-                    std.debug.print("O", .{});
+                if (self.is_plot(Point.new(x, y))) {
+                    std.debug.print("\x1b[32mO", .{});
                 } else {
                     std.debug.print("{c}", .{self.get_char(x, y)});
                 }
@@ -101,10 +143,12 @@ const Grid = struct {
     }
 };
 
-const Point = struct {
-    x: isize,
-    y: isize,
-};
+pub fn parse_args(argv: [][*:0]u8) !struct { usize, usize } {
+    return .{
+        try std.fmt.parseInt(usize, std.mem.span(argv[1]), 10),
+        try std.fmt.parseInt(usize, std.mem.span(argv[2]), 10),
+    };
+}
 
 pub fn arithmetic_sum(start: usize, step: usize, amount: usize) usize {
     return amount * (start + (step * (amount - 1)) / 2);
