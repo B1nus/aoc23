@@ -1,174 +1,243 @@
+// I cheated btw. If anyone was wondering.
 const std = @import("std");
 
 pub fn main() !void {
-    // Please note that I cheated again. I took help from a video on the problem from @programmingproblems on youtube. They have great videos on the problems.
-    // var prod: usize = 1;
-    var modules, const outputs, const inputs, var memory = try parse_input(@embedFile("20.txt"));
-    _ = try button_presses(&modules, outputs, inputs, &memory, "", false);
-    // for (try find_parent_parents(inputs, "rx")) |in| {
-    //     var modules, _, _, var memory = try parse_input(@embedFile("20.txt"));
-    //     defer modules.deinit();
-    //     defer memory.deinit();
-    //     const cycle = try button_presses(&modules, outputs, inputs, &memory, in, false);
-    //     std.debug.print("{s} {d} \n\n", .{ in, cycle });
-    //     prod *= lcm(prod, cycle);
-    // }
-    // std.debug.print("Day 20 >> {d}\n", .{prod});
-}
-
-pub fn find_parent_parents(inputs: std.StringHashMap([][]const u8), label: []const u8) ![][]const u8 {
-    const parent = inputs.get(label).?[0];
-    const parent_parents = inputs.get(parent).?;
-    var parent_parent_parents = std.ArrayList([]const u8).init(std.heap.page_allocator);
-    for (parent_parents) |parent_parent| {
-        try parent_parent_parents.appendSlice(inputs.get(parent_parent).?);
-    }
-    return parent_parent_parents.items;
-}
-
-pub fn parse_input(input: []const u8) !struct { std.StringHashMap(Module), std.StringHashMap([][]const u8), std.StringHashMap([][]const u8), std.StringHashMap(?bool) } {
-    var modules = std.StringHashMap(Module).init(std.heap.page_allocator);
-    var outputs = std.StringHashMap([][]const u8).init(std.heap.page_allocator);
-    var inputs = std.StringHashMap([][]const u8).init(std.heap.page_allocator);
-    var memory = std.StringHashMap(?bool).init(std.heap.page_allocator);
-
-    try modules.put("button", Module.button);
-    var slice: [][]const u8 = try std.heap.page_allocator.alloc([]const u8, 1);
-    slice[0] = "button";
-    try inputs.put("broadcaster", slice);
-
-    var lines = std.mem.splitScalar(u8, input, '\n');
-    while (lines.next()) |line| {
-        if (line.len > 0) {
-            var iter = std.mem.splitSequence(u8, line, " -> ");
-            const label = switch (line[0]) {
-                'b' => iter.next().?,
-                else => iter.next().?[1..],
-            };
-            const out_count = std.mem.count(u8, line, ",") + 1;
-            var out_iter = std.mem.splitSequence(u8, iter.next().?, ", ");
-            var labels = try std.heap.page_allocator.alloc([]const u8, out_count);
-            for (0..out_count) |i| {
-                labels[i] = out_iter.next().?;
-                if (inputs.getPtr(labels[i])) |ptr| {
-                    for (ptr.*) |*s| {
-                        if (s.len == 0) {
-                            s.* = label;
-                            break;
-                        }
-                    }
-                } else {
-                    var s = try std.heap.page_allocator.alloc(u8, labels[i].len + 1);
-                    std.mem.copyForwards(u8, s[1..], labels[i]);
-                    s[0] = ' ';
-                    const input_count = std.mem.count(u8, input, s);
-                    var input_labels = try std.heap.page_allocator.alloc([]const u8, input_count);
-                    input_labels[0] = label;
-                    for (input_labels[1..]) |*lab| {
-                        lab.* = "";
-                    }
-                    try inputs.put(labels[i], input_labels);
-                }
-            }
-            const module = switch (line[0]) {
-                '%' => Module{ .flip_flop = false },
-                '&' => Module{ .conjunction = 0 },
-                'b' => Module.broadcaster,
-                else => unreachable,
-            };
-            try modules.put(label, module);
-            try outputs.put(label, labels);
-            try memory.put(label, null);
+    var prod: u128 = 1;
+    var wires = try Wires.new(@embedFile("20.txt"), std.heap.page_allocator);
+    defer wires.deinit();
+    for (try wires.get_parents("rx", 3)) |in| {
+        wires.reset();
+        while (wires.cycle.get(in) == null) {
+            try wires.press_button();
         }
+        // std.debug.print("{s} {d}\n", .{ in, wires.cycle.get(in).? });
+        prod = lcm(prod, wires.cycle.get(in).?);
     }
 
-    return .{ modules, outputs, inputs, memory };
+    std.debug.print("{d}\n", .{prod});
 }
 
-pub fn button_presses(modules: *std.StringHashMap(Module), outputs: std.StringHashMap([][]const u8), inputs: std.StringHashMap([][]const u8), memory: *std.StringHashMap(?bool), label: []const u8, pulse: bool) !usize {
-    var count: usize = 0;
-    var low_pulses: usize = 0;
-    var high_pulses: usize = 0;
-    while (count < 1000) : (count += 1) {
-        try press_button(modules, outputs, inputs, memory, &high_pulses, &low_pulses);
-    }
-    std.debug.print("{d}\n", .{low_pulses * high_pulses});
-    _ = label;
-    _ = pulse;
-    // var it = memory.keyIterator();
-    // while (it.next()) |l| {
-    //     std.debug.print("{s} {any}\n", .{ l.*, memory.get(l.*).? });
-    // }
-    return count;
-}
-
-pub fn press_button(modules: *std.StringHashMap(Module), outputs: std.StringHashMap([][]const u8), inputs: std.StringHashMap([][]const u8), memory: *std.StringHashMap(?bool), high_pulses: *usize, low_pulses: *usize) !void {
-    var pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
-    defer pulses.deinit();
-    try pulses.append(Pulse{ .from = "button", .to = "broadcaster", .high = false });
-    while (pulses.items.len > 0) {
-        var new_pulses = std.ArrayList(Pulse).init(std.heap.page_allocator);
-        defer new_pulses.deinit();
-        for (pulses.items) |pulse| {
-            if (pulse.high) high_pulses.* += 1;
-            if (!pulse.high) low_pulses.* += 1;
-            if (modules.getPtr(pulse.to)) |mod| {
-                switch (mod.*) {
-                    .button => unreachable,
-                    .broadcaster => {
-                        for (outputs.get(pulse.to).?) |out| {
-                            try new_pulses.append(Pulse{ .from = pulse.to, .to = out, .high = pulse.high });
-                        }
-                        try memory.put(pulse.to, false);
-                    },
-                    .flip_flop => |*on| {
-                        if (!pulse.high) {
-                            on.* = !on.*;
-                            for (outputs.get(pulse.to).?) |out| {
-                                try new_pulses.append(Pulse{ .from = pulse.to, .to = out, .high = on.* });
-                            }
-                            try memory.put(pulse.to, on.*);
-                        }
-                    },
-                    .conjunction => |_| {
-                        var all_high = true;
-                        for (inputs.get(pulse.to).?) |in| {
-                            if (memory.get(in).?) |mem| {
-                                if (!mem) {
-                                    all_high = false;
-                                    break;
-                                }
-                            }
-                        }
-
-                        for (outputs.get(pulse.to).?) |out| {
-                            try new_pulses.append(Pulse{ .from = pulse.to, .to = out, .high = !all_high });
-                        }
-                        try memory.put(pulse.to, !all_high);
-                    },
-                }
-            }
-        }
-
-        pulses.clearAndFree();
-        try pulses.appendSlice(new_pulses.items);
-    }
-}
-
-// Least common multiple
-pub fn lcm(a: usize, b: usize) usize {
+pub fn lcm(a: u128, b: u128) u128 {
     return a * b / std.math.gcd(a, b);
 }
 
-const Pulse = struct {
-    from: []const u8,
-    to: []const u8,
-    high: bool,
+const Wires = struct {
+    module_type: std.StringHashMap(Module),
+    inputs: std.StringHashMap(std.ArrayList([]const u8)),
+    outputs: std.StringHashMap(std.ArrayList([]const u8)),
+    memory: std.StringHashMap(PulseType),
+    cycle: std.StringHashMap(usize),
+    queue: Queue,
+    presses: usize,
+
+    pub fn new(input: []const u8, allocator: std.mem.Allocator) !@This() {
+        const queue = Queue.new(allocator);
+        var memory = std.StringHashMap(PulseType).init(allocator);
+        var module_type = std.StringHashMap(Module).init(allocator);
+        var inputs = std.StringHashMap(std.ArrayList([]const u8)).init(allocator);
+        var outputs = std.StringHashMap(std.ArrayList([]const u8)).init(allocator);
+        const cycle = std.StringHashMap(usize).init(allocator);
+
+        var lines = std.mem.splitScalar(u8, input, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+
+            var arrow_split = std.mem.splitSequence(u8, line, " -> ");
+            const label, const module_type_ = switch (line[0]) {
+                'b' => .{ arrow_split.next().?, Module.Broadcaster },
+                '%' => .{ arrow_split.next().?[1..], Module.FlipFlop },
+                '&' => .{ arrow_split.next().?[1..], Module.Conjunction },
+                else => .{ arrow_split.next().?, Module.Unknown },
+            };
+
+            try outputs.put(label, std.ArrayList([]const u8).init(allocator));
+            var outputs_ = std.mem.splitSequence(u8, arrow_split.next().?, ", ");
+            while (outputs_.next()) |output| {
+                try outputs.getPtr(label).?.append(output);
+
+                // For modules not listed, such as rx
+                if (module_type.get(output) == null) {
+                    try module_type.put(output, Module.Unknown);
+                    try outputs.put(output, std.ArrayList([]const u8).init(allocator));
+                }
+
+                // Adding as input to the receiving end
+                if (inputs.getPtr(output)) |in| {
+                    try in.append(label);
+                } else {
+                    try inputs.put(output, std.ArrayList([]const u8).init(allocator));
+                    try inputs.getPtr(output).?.append(label);
+                }
+            }
+
+            try module_type.put(label, module_type_);
+            try memory.put(label, low);
+
+            // If it has no outputs/inputs, add an empty list. For simplicities sake
+            if (outputs.get(label) == null) try outputs.put(label, std.ArrayList([]const u8).init(allocator));
+            if (inputs.get(label) == null) try inputs.put(label, std.ArrayList([]const u8).init(allocator));
+        }
+
+        return @This(){ .module_type = module_type, .inputs = inputs, .outputs = outputs, .memory = memory, .cycle = cycle, .queue = queue, .presses = 0 };
+    }
+
+    pub fn get_parents(self: *@This(), child: []const u8, depth: usize) ![][]const u8 {
+        var children = std.ArrayList([]const u8).init(self.module_type.allocator);
+        var parents = std.ArrayList([]const u8).init(self.module_type.allocator);
+        defer children.deinit();
+
+        try children.append(child);
+
+        for (0..depth) |_| {
+            parents.clearAndFree();
+            while (children.popOrNull()) |c| {
+                try parents.appendSlice(self.inputs.get(c).?.items);
+            }
+            children.clearAndFree();
+            try children.appendSlice(parents.items);
+        }
+
+        return parents.items;
+    }
+
+    pub fn reset(self: *@This()) void {
+        self.queue.clear();
+        self.cycle.clearAndFree();
+        var it = self.memory.keyIterator();
+        while (it.next()) |label| {
+            self.memory.getPtr(label.*).?.* = low;
+        }
+        self.presses = 0;
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.module_type.deinit();
+        self.cycle.deinit();
+        self.inputs.deinit();
+        self.outputs.deinit();
+        self.memory.deinit();
+        self.queue.deinit();
+    }
+
+    pub fn press_button(self: *@This()) !void {
+        try self.queue.list.append(Pulse{ .to = "broadcaster", .type = low });
+        self.presses += 1;
+        while (self.queue.items().len != 0) {
+            for (self.queue.items()) |pulse| {
+                // if (pulse.type == high) std.debug.print("-high-> {s}\n", .{pulse.to}) else std.debug.print("-low-> {s}\n", .{pulse.to});
+                try self.process_pulse(pulse);
+            }
+            try self.queue.update();
+        }
+    }
+
+    pub fn response(self: *@This(), pulse: Pulse) !?PulseType {
+        switch (self.module_type.get(pulse.to).?) {
+            .Broadcaster => return pulse.type,
+            .FlipFlop => {
+                if (pulse.type == low) {
+                    return self.memory.getPtr(pulse.to).?.*.opposite();
+                } else {
+                    return null;
+                }
+            },
+            .Conjunction => {
+                for (self.inputs.get(pulse.to).?.items) |in| {
+                    if (self.memory.get(in).? == low) {
+                        return high;
+                    }
+                }
+
+                try self.cycle.put(pulse.to, self.presses);
+                return low;
+            },
+            .Unknown => return null,
+        }
+    }
+
+    pub fn process_pulse(self: *@This(), pulse: Pulse) !void {
+        if (try self.response(pulse)) |pulse_type| {
+            self.memory.getPtr(pulse.to).?.* = pulse_type;
+
+            for (self.outputs.get(pulse.to).?.items) |output| {
+                try self.queue.append(Pulse{ .to = output, .type = pulse_type });
+            }
+        }
+    }
+
+    pub fn print(self: @This()) !void {
+        var labels = self.module_type.keyIterator();
+
+        while (labels.next()) |label_| {
+            const label = label_.*;
+            std.debug.print("{s} \x1b[1m-> {s} ->\x1b[0m {s}\n", .{
+                try std.mem.join(self.module_type.allocator, ", ", self.inputs.get(label).?.items),
+                label,
+                try std.mem.join(self.module_type.allocator, ", ", self.outputs.get(label).?.items),
+            });
+        }
+    }
 };
 
-const Module = union(enum) {
-    button,
-    broadcaster,
-    conjunction: usize, // Counting the amount of high in pulses.
-    flip_flop: bool, // On or off
+const Queue = struct {
+    list: std.ArrayList(Pulse),
+    next: std.ArrayList(Pulse),
+
+    pub fn new(allocator: std.mem.Allocator) @This() {
+        return @This(){
+            .list = std.ArrayList(Pulse).init(allocator),
+            .next = std.ArrayList(Pulse).init(allocator),
+        };
+    }
+
+    // Add pulses to send, use update for this to take effect
+    pub fn append(self: *@This(), pulse: Pulse) !void {
+        try self.next.append(pulse);
+    }
+
+    // Add the new pulses and remove the old ones.
+    pub fn update(self: *@This()) !void {
+        self.list = try self.next.clone();
+        self.next.clearAndFree();
+    }
+
+    pub fn items(self: @This()) []Pulse {
+        return self.list.items;
+    }
+
+    pub fn clear(self: *@This()) void {
+        self.list.clearAndFree();
+        self.next.clearAndFree();
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.list.deinit();
+        self.next.deinit();
+    }
+};
+
+const Pulse = struct {
+    to: []const u8,
+    type: PulseType,
+};
+
+const high = PulseType.high;
+const low = PulseType.low;
+const PulseType = enum {
+    low,
+    high,
+
+    pub fn opposite(self: @This()) @This() {
+        return switch (self) {
+            .low => PulseType.high,
+            .high => PulseType.low,
+        };
+    }
+};
+
+const Module = enum {
+    Unknown,
+    Broadcaster,
+    FlipFlop,
+    Conjunction,
 };
