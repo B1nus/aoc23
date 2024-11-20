@@ -1,5 +1,4 @@
 const std = @import("std");
-const input = @embedFile("21.txt");
 
 // Even number of steps is this patterns
 //
@@ -100,83 +99,118 @@ const input = @embedFile("21.txt");
 // You have to simulate one of these for each direction since they have different obstacles to depending
 // on the direction.
 pub fn main() !void {
-    var lines = std.mem.splitScalar(u8, input, '\n');
-    const width = lines.peek().?.len;
-    const height = (input.len + 1) / (width + 1);
-    var grid = try std.heap.page_allocator.alloc(u8, width * height);
-    var i: usize = 0;
-    while (lines.next()) |line| {
-        std.mem.copyForwards(u8, grid[i..], line);
-        i += width;
-    }
+    var grid = try Grid.parse_grid(@embedFile("21.txt"));
 
-    const uneven = try step(grid, width, width / 2 + height / 2 * width, 131, false);
-    const even = try step(grid, width, width / 2 + height / 2 * width, 132, false);
+    const s = 50;
+    const w = grid.width;
+    const r = (w - 1) / 2; // The amount of steps from the start to the edge
+    const g_steps = ceil_div(s - r, w);
+    const c_steps1 = (s - r - 1) % w;
+    const c_steps2 = (s - r - 1) % w + w;
+    // const e_steps1 = c_steps1 - r - 1;
+    // const e_steps2 = c_steps2 - r - 1;
+    // const e_steps3 = c_steps2 + w - r - 1;
+    // const e_count1 = g_steps;
+    // const e_count2 = g_steps - 1;
+    // const e_count3 = g_steps - 2;
+    const A_steps = (s % 2) + w + 101;
+    const B_steps = (s % 2) + w + 100;
+    const A_rows = @divFloor(g_steps, 2) - 1;
+    const B_rows = @divFloor(g_steps - 1, 2);
+    const A_count = arithmetic_sum(2, 2, A_rows);
+    const B_count = arithmetic_sum(1, 2, B_rows);
 
-    // Uneven grids = 10231221350 * 4
-    // Even grids = 10231322500 * 4
-    const grid_sum: u128 = (1023122135 * uneven + 10231322500 * even) * 4 + uneven; // Adding one because of the starting grid
+    const A_tiles = try grid.take_steps(.{ w / 2, w / 2 }, A_steps);
+    const B_tiles = try grid.take_steps(.{ w / 2, w / 2 }, B_steps);
+    const r_corner1_tiles = try grid.take_steps(.{ 0, w / 2 }, c_steps1);
+    grid.print("c1");
+    const r_corner2_tiles = try grid.take_steps(.{ 0, w / 2 }, c_steps2);
+    grid.print("c2");
+    const r_corner_tiles = r_corner1_tiles + r_corner2_tiles;
 
-    var tiny_edge_sum: u128 = 0;
-    tiny_edge_sum += try step(grid, width, grid.len - width, 64, true); // north east
-    tiny_edge_sum += try step(grid, width, grid.len - 1, 64, true); // north west
-    tiny_edge_sum += try step(grid, width, width - 1, 64, true); // south west
-    tiny_edge_sum += try step(grid, width, 0, 64, true); // south east
-    tiny_edge_sum *= 202300;
-
-    var edge_sum: u128 = 0;
-    edge_sum += try step(grid, width, grid.len - width, 65 * 3, true); // north east
-    edge_sum += try step(grid, width, grid.len - 1, 65 * 3, true); // north west
-    edge_sum += try step(grid, width, width - 1, 65 * 3, true); // south west
-    edge_sum += try step(grid, width, 0, 65 * 3, true); // south east
-    edge_sum *= 202299;
-
-    var corner_sum: u128 = 0;
-    corner_sum += try step(grid, width, grid.len - width / 2 - 1, 130, true); // north
-    corner_sum += try step(grid, width, height / 2 * width + width - 1, 130, true); // west
-    corner_sum += try step(grid, width, width / 2, 130, true); // south
-    corner_sum += try step(grid, width, height / 2 * width, 130, true); // east
-
-    const result = grid_sum + tiny_edge_sum + edge_sum + corner_sum;
-    std.debug.print("Day 21 >> {d}\n", .{result});
+    var result: u128 = 0;
+    result += (A_tiles * A_count + B_tiles * B_count) * 4;
+    result += A_tiles; // The middle grid
+    result += r_corner_tiles; // + u_corner_tiles + l_corner_tiles + d_corner_tiles;
 }
 
-pub fn step(grid: []const u8, width: usize, start: usize, steps: usize, print: bool) !u128 {
-    var plots = std.AutoHashMap(usize, void).init(std.heap.page_allocator);
-    try plots.put(start, void{});
-    for (0..steps) |_| {
-        var new_plots = std.AutoHashMap(usize, void).init(std.heap.page_allocator);
-        defer new_plots.deinit();
-        var plots_iter = plots.keyIterator();
-        while (plots_iter.next()) |plot| {
-            if (plot.* % width != 0 and grid[plot.* - 1] != '#') try new_plots.put(plot.* - 1, void{});
-            if (plot.* % width != width - 1 and grid[plot.* + 1] != '#') try new_plots.put(plot.* + 1, void{});
-            if (plot.* + width < grid.len and grid[plot.* + width] != '#') try new_plots.put(plot.* + width, void{});
-            if (plot.* >= width and grid[plot.* - width] != '#') try new_plots.put(plot.* - width, void{});
+const Grid = struct {
+    chars: []const u8,
+    width: usize,
+    height: usize,
+    plots: std.AutoHashMap([2]usize, void),
+    size: usize,
+
+    pub fn parse_grid(input: []const u8) !@This() {
+        var lines = std.mem.splitScalar(u8, input, '\n');
+        const width = lines.peek().?.len;
+        const height = (input.len + 1) / (width + 1);
+        var grid = try std.heap.page_allocator.alloc(u8, width * height);
+        var i: usize = 0;
+        while (lines.next()) |line| {
+            std.mem.copyForwards(u8, grid[i..], line);
+            i += width;
         }
-        plots.clearAndFree();
-        plots = try new_plots.clone();
+        return @This(){
+            .chars = grid,
+            .width = width,
+            .height = height,
+            .plots = std.AutoHashMap([2]usize, void).init(std.heap.page_allocator),
+        };
     }
-    if (print) {
-        print_map(grid, width, &plots);
-        std.debug.print("\n\n", .{});
+
+    // Take steps and return the count of plots
+    pub fn take_steps(self: *Grid, start: [2]usize, steps: usize) !u128 {
+        self.plots.clearAndFree();
+        try self.plots.put(start, void{});
+        for (0..steps) |_| {
+            var new_plots = std.AutoHashMap([2]usize, void).init(std.heap.page_allocator);
+            defer new_plots.deinit();
+            var plots_iter = self.plots.keyIterator();
+            while (plots_iter.next()) |plot| {
+                const x, const y = plot.*;
+                if (self.get_char(x - 1, y) != '#') try new_plots.put(.{ x - 1, y }, void{});
+                if (self.get_char(x + 1, y) != '#') try new_plots.put(.{ x + 1, y }, void{});
+                if (self.get_char(x, y + 1) != '#') try new_plots.put(.{ x, y + 1 }, void{});
+                if (self.get_char(x, y - 1) != '#') try new_plots.put(.{ x, y - 1 }, void{});
+            }
+            self.plots.clearAndFree();
+            self.plots = try new_plots.clone();
+        }
+        return @intCast(self.plots.count());
     }
-    return @intCast(plots.count());
+
+    pub fn get_char(self: *Grid, x: usize, y: usize) u8 {
+        return self.chars[x % (self.width) + (y % self.height) * self.width];
+    }
+
+    pub fn is_plot(self: Grid, x: usize, y: usize) bool {
+        return self.plots.get(.{ x, y }) != null;
+    }
+
+    pub fn print(self: Grid, label: []const u8) void {
+        std.debug.print("\x1b[1m{s}:\x1b[0m\n", .{label});
+        for (0..self.height) |y| {
+            for (0..self.width) |x| {
+                if (x == self.width / 2 or y == self.height / 2) {
+                    std.debug.print("\x1b[31m", .{});
+                }
+                if (self.is_plot(x, y)) {
+                    std.debug.print("O", .{});
+                } else {
+                    std.debug.print("{c}", .{self.chars[x + y * self.width]});
+                }
+                std.debug.print("\x1b[0m", .{});
+            }
+            std.debug.print("\n", .{});
+        }
+    }
+};
+
+pub fn arithmetic_sum(start: usize, step: usize, amount: usize) usize {
+    return amount * (start + (step * (amount - 1)) / 2);
 }
 
-pub fn print_map(grid: []const u8, width: usize, plots: *const std.AutoHashMap(usize, void)) void {
-    for (0..grid.len / width) |y| {
-        for (0..width) |x| {
-            if (x == width / 2 or y == grid.len / width / 2) {
-                std.debug.print("\x1b[31m", .{});
-            }
-            if (plots.get(x + y * width) != null) {
-                std.debug.print("O", .{});
-            } else {
-                std.debug.print("{c}", .{grid[x + y * width]});
-            }
-            std.debug.print("\x1b[0m", .{});
-        }
-        std.debug.print("\n", .{});
-    }
+pub fn ceil_div(dividend: usize, divisor: usize) usize {
+    return @divFloor(dividend + divisor - 1, divisor);
 }
