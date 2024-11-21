@@ -3,6 +3,7 @@ const std = @import("std");
 // So, the pattern is a large diamons shape. The idea is to Emulate steps to account
 // for the corners and edges and keep track of how many filled grids there are.
 pub fn main() !void {
+    const mod_size = 7;
     const steps, const size = try parse_args(std.os.argv);
     var grid = try Grid.parse_grid(@embedFile("21.txt"), std.heap.page_allocator);
 
@@ -10,9 +11,20 @@ pub fn main() !void {
     // Then pick out ranges and multiply them to get the answer.
     //
     // Hmm, how big does it have to be?
-    try grid.take_steps(Point.new(0, 0), steps);
-    std.debug.print("{d} spots", .{grid.count_reach(-100, 100, -100, 100)});
-    grid.print("", size);
+    // if (steps > grid.size * 3 - grid.radius) {
+    if (steps > (mod_size / 2 - 1) * grid.size + grid.radius) {
+        const modulo_steps = (steps - grid.radius - 1) % size + grid.radius + size * (mod_size / 2) + 1;
+        try grid.take_steps(Point.new(0, 0), steps);
+        std.debug.print("{d}, ", .{grid.reach.hash.count()});
+        grid.print("normal", size);
+        grid.reset();
+        try grid.take_steps(Point.new(0, 0), modulo_steps);
+        std.debug.print("{d}, ", .{grid.reach.hash.count()});
+        grid.print("modulo", size);
+    } else {
+        try grid.take_steps(Point.new(0, 0), steps);
+        std.debug.print("{d}\n", .{grid.reach.hash.count()});
+    }
 }
 
 const Point = struct {
@@ -67,6 +79,7 @@ const Set = struct {
 const Grid = struct {
     chars: []const u8,
     size: usize,
+    radius: usize,
     reach: Set,
 
     pub fn parse_grid(input: []const u8, allocator: std.mem.Allocator) !@This() {
@@ -81,6 +94,7 @@ const Grid = struct {
         return @This(){
             .chars = grid,
             .size = size,
+            .radius = size / 2,
             .reach = Set.new(allocator),
         };
     }
@@ -111,6 +125,10 @@ const Grid = struct {
         }
     }
 
+    pub fn reset(self: *Grid) void {
+        self.reach.clear();
+    }
+
     pub fn get_char(self: *Grid, x: isize, y: isize) u8 {
         const size: isize = @intCast(self.size);
         const size_half: isize = @intCast(self.size / 2);
@@ -121,6 +139,12 @@ const Grid = struct {
         return self.reach.has(point);
     }
 
+    pub fn in_range(self: Grid, point: Point, grid_pos: Point) bool {
+        const size: isize = @intCast(self.size);
+        const radius: isize = @intCast(self.radius);
+        return point.in_range(grid_pos.x * size - radius, grid_pos.x * size + radius, grid_pos.y * size - radius, grid_pos.y * size + radius);
+    }
+
     pub fn print(self: *Grid, label: []const u8, size: usize) void {
         std.debug.print("\x1b[1m{s}:\x1b[0m\n", .{label});
         const offset: isize = @intCast(size * self.size / 2);
@@ -128,11 +152,15 @@ const Grid = struct {
             for (0..size * self.size) |x_| {
                 const x = @as(isize, @intCast(x_)) - offset;
                 const y = @as(isize, @intCast(y_)) - offset;
+                const point = Point.new(x, y);
                 if (x == 0 or y == 0) {
                     std.debug.print("\x1b[31m", .{});
                 }
-                if (self.is_plot(Point.new(x, y))) {
-                    std.debug.print("\x1b[32mO", .{});
+                if (self.in_range(point, Point.new(1, 1))) {
+                    std.debug.print("\x1b[35m", .{});
+                }
+                if (self.is_plot(point)) {
+                    std.debug.print("O", .{});
                 } else {
                     std.debug.print("{c}", .{self.get_char(x, y)});
                 }
