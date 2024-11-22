@@ -3,28 +3,15 @@ const std = @import("std");
 // So, the pattern is a large diamons shape. The idea is to Emulate steps to account
 // for the corners and edges and keep track of how many filled grids there are.
 pub fn main() !void {
-    const mod_size = 7;
-    const steps, const size = try parse_args(std.os.argv);
+    const steps = 26501365;
     var grid = try Grid.parse_grid(@embedFile("21.txt"), std.heap.page_allocator);
+    const count = try grid.count_reach(steps);
+    std.debug.print("Day 21 >> {d}\n", .{count});
 
     // I don't need to do all parts separetly. I can just do one big step simulation and
     // Then pick out ranges and multiply them to get the answer.
     //
     // Hmm, how big does it have to be?
-    // if (steps > grid.size * 3 - grid.radius) {
-    if (steps > (mod_size / 2 - 1) * grid.size + grid.radius) {
-        const modulo_steps = (steps - grid.radius - 1) % size + grid.radius + size * (mod_size / 2) + 1;
-        try grid.take_steps(Point.new(0, 0), steps);
-        std.debug.print("{d}, ", .{grid.reach.hash.count()});
-        grid.print("normal", size);
-        grid.reset();
-        try grid.take_steps(Point.new(0, 0), modulo_steps);
-        std.debug.print("{d}, ", .{grid.reach.hash.count()});
-        grid.print("modulo", size);
-    } else {
-        try grid.take_steps(Point.new(0, 0), steps);
-        std.debug.print("{d}\n", .{grid.reach.hash.count()});
-    }
 }
 
 const Point = struct {
@@ -99,11 +86,46 @@ const Grid = struct {
         };
     }
 
-    pub fn count_reach(self: Grid, min_x: isize, max_x: isize, min_y: isize, max_y: isize) usize {
+    pub fn count_reach(self: *Grid, steps: usize) !u128 {
+        if (steps > 3 * self.size) {
+            const s = steps % self.size + 3 * self.size;
+            const m = steps / self.size - 3;
+            const o = m * (m + 4);
+            const c = m * (m + 2);
+
+            try self.take_steps(Point.new(0, 0), s);
+            var count: u128 = self.reach.hash.count();
+            count += m * self.count_reach_in_grid(Point.new(1, -1));
+            count += m * self.count_reach_in_grid(Point.new(2, -1));
+            count += m * self.count_reach_in_grid(Point.new(3, -1));
+            count += m * self.count_reach_in_grid(Point.new(1, 1));
+            count += m * self.count_reach_in_grid(Point.new(2, 1));
+            count += m * self.count_reach_in_grid(Point.new(3, 1));
+            count += m * self.count_reach_in_grid(Point.new(-1, -1));
+            count += m * self.count_reach_in_grid(Point.new(-2, -1));
+            count += m * self.count_reach_in_grid(Point.new(-3, -1));
+            count += m * self.count_reach_in_grid(Point.new(-1, 1));
+            count += m * self.count_reach_in_grid(Point.new(-2, 1));
+            count += m * self.count_reach_in_grid(Point.new(-3, 1));
+            count += c * self.count_reach_in_grid(Point.new(0, 0));
+            count += o * self.count_reach_in_grid(Point.new(1, 0));
+
+            return count;
+        } else {
+            return self.naive_count(steps);
+        }
+    }
+
+    pub fn naive_count(self: *Grid, steps: usize) !u128 {
+        try self.take_steps(Point.new(0, 0), steps);
+        return @intCast(self.reach.hash.count());
+    }
+
+    pub fn count_reach_in_grid(self: Grid, grid: Point) usize {
         var it = self.reach.iterator();
         var count: usize = 0;
         while (it.next()) |p| {
-            if (p.in_range(min_x, max_x, min_y, max_y)) count += 1;
+            if (self.in_range(p.*, grid)) count += 1;
         }
         return count;
     }
@@ -155,9 +177,8 @@ const Grid = struct {
                 const point = Point.new(x, y);
                 if (x == 0 or y == 0) {
                     std.debug.print("\x1b[31m", .{});
-                }
-                if (self.in_range(point, Point.new(1, 1))) {
-                    std.debug.print("\x1b[35m", .{});
+                } else if (x_ % self.size == 0 or x_ % self.size == self.size - 1 or y_ % self.size == 0 or y_ % self.size == self.size - 1) {
+                    std.debug.print("\x1b[32m", .{});
                 }
                 if (self.is_plot(point)) {
                     std.debug.print("O", .{});
@@ -170,13 +191,6 @@ const Grid = struct {
         }
     }
 };
-
-pub fn parse_args(argv: [][*:0]u8) !struct { usize, usize } {
-    return .{
-        try std.fmt.parseInt(usize, std.mem.span(argv[1]), 10),
-        try std.fmt.parseInt(usize, std.mem.span(argv[2]), 10),
-    };
-}
 
 pub fn arithmetic_sum(start: usize, step: usize, amount: usize) usize {
     return amount * (start + (step * (amount - 1)) / 2);
