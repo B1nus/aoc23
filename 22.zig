@@ -3,10 +3,16 @@ const std = @import("std");
 pub fn main() !void {
     var sim = try Simulation.parse(@embedFile("22.txt"), std.heap.page_allocator);
     try sim.simulate();
+    var count: usize = 0;
+    for (0..sim.settled.items.len) |i| {
+        const sub_count = try sim.count_falling(i, std.heap.page_allocator);
+        // std.debug.print("{c} {d}\n", .{ @as(u8, @intCast(i)) + 'A', sub_count });
+        count += sub_count;
+    }
     // for (sim.settled.items) |b| {
     //     b.print();
     // }
-    std.debug.print("{d}\n", .{sim.count_free()});
+    std.debug.print("{d}\n", .{count});
     // var it = sim.above.iterator();
     // while (it.next()) |aboves| {
     //     for (aboves.value_ptr.*.items) |above| {
@@ -89,25 +95,58 @@ const Simulation = struct {
         std.debug.assert(self.falling.items.len == 0);
     }
 
-    pub fn safe_to_disintegrate(self: @This(), index: usize) bool {
-        if (self.above.get(index)) |aboves| {
-            if (aboves.items.len > 0) {
-                for (aboves.items) |block_above| {
-                    if (self.below.get(block_above).?.items.len <= 1) {
-                        return false;
-                    }
-                }
+    pub fn has_support(self: @This(), index: usize, ignore: []usize) bool {
+        for (self.below.get(index).?.items) |below| {
+            if (std.mem.count(usize, ignore, &.{below}) == 0) {
+                return true;
             }
         }
-        return true;
+        return false;
     }
 
-    pub fn count_free(self: @This()) usize {
+    pub fn count_falling(self: @This(), block_to_disintegrate: usize, allocator: std.mem.Allocator) !usize {
+        var falling = std.ArrayList(usize).init(allocator);
+        try falling.append(block_to_disintegrate);
+
         var count: usize = 0;
-        for (0..self.settled.items.len) |i| {
-            if (self.safe_to_disintegrate(i)) count += 1;
+        var queue = Queue.new(self.above.get(block_to_disintegrate).?.items, allocator);
+        while (queue.pop()) |i| {
+            if (!self.has_support(i, falling.items)) {
+                try falling.append(i);
+                count += 1;
+                try queue.delayed_push_slice(self.above.get(i).?.items);
+            }
+            try queue.apply_delayed();
         }
         return count;
+    }
+};
+
+const Queue = struct {
+    current: std.ArrayList(usize),
+    next: std.ArrayList(usize),
+    pub fn new(slice: []usize, allocator: std.mem.Allocator) @This() {
+        return @This(){
+            .current = std.ArrayList(usize).fromOwnedSlice(allocator, slice),
+            .next = std.ArrayList(usize).init(allocator),
+        };
+    }
+
+    pub fn pop(self: *@This()) ?usize {
+        return self.current.popOrNull();
+    }
+
+    pub fn delayed_push(self: *@This(), item: usize) !void {
+        try self.next.append(item);
+    }
+
+    pub fn delayed_push_slice(self: *@This(), slice: []usize) !void {
+        try self.next.appendSlice(slice);
+    }
+
+    pub fn apply_delayed(self: *@This()) !void {
+        try self.current.appendSlice(self.next.items);
+        self.next.clearAndFree();
     }
 };
 
