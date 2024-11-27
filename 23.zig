@@ -1,132 +1,117 @@
 const std = @import("std");
 const List = std.ArrayList;
-const Map = std.AutoHashMap;
 
 pub fn main() !void {
     const ally = std.heap.page_allocator;
     const grid, const width = try parse_grid(@embedFile("23.txt"), ally);
     const graph = try generate_graph(grid, width, ally);
-    graph.print_nodes();
-    // std.debug.print("edges: {any}\n", .{graph.edges.items});
-    // const max = try most_scenic_walk_length_in_graph(graph, ally);
-    // std.debug.print("{d}\n", .{max});
+    graph.print_grid(grid, width, null);
+    graph.print_edges();
 }
 
-fn most_scenic_walk_length_in_graph(graph: Graph, ally: std.mem.Allocator) !usize {
-    var walkers = std.ArrayList(GraphWalker).init(ally);
-    var seen = std.AutoHashMap([2]usize, void).init(ally);
-    try walkers.append(GraphWalker{ .prev = undefined, .node = 0, .cost = 0 });
-    try seen.put(.{ 0, 0 }, void{});
+// fn most_scenic_walk_length_in_graph(graph: Graph, ally: std.mem.Allocator) !usize {
+// }
 
-    var active_walkers = std.ArrayList(usize).init(ally);
-    try active_walkers.append(0);
-
-    var max: usize = 0;
-    while (active_walkers.popOrNull()) |walker_i| {
-        const walker = walkers.items[walker_i];
-        // std.debug.print("{any}\n", .{walker});
-        var adjacent = try adjacent_nodes(graph, walker.node, ally);
-        // if (walker.node == 1 and walker.prev == 0) {
-        //     std.debug.print("{any}\n", .{graph.edges.items});
-        //     std.debug.print("{any}\n", .{adjacent.items});
-        // }
-        // Remove nodes we've already been to
-        var i: usize = 0;
-        for (adjacent.items) |adj| {
-            if (seen.get(.{ walker_i, adj[0] })) |_| {
-                _ = adjacent.orderedRemove(i);
-            } else {
-                i += 1;
-            }
-        }
-
-        // if (walker.node == 1 and walker.prev == 0) {
-        //     std.debug.print("{any}\n", .{graph.edges.items});
-        //     std.debug.print("{any}\n", .{adjacent.items});
-        // }
-        if (adjacent.items.len > 0) {
-            if (adjacent.items.len > 1) {
-                for (adjacent.items[1..]) |adj| {
-                    try walkers.append(GraphWalker{ .prev = walker.node, .node = adj[0], .cost = walker.cost + adj[1] });
-                    try seen.put(.{ walkers.items.len - 1, walker.node }, void{});
-                    try active_walkers.append(walkers.items.len - 1);
-                }
-            }
-            walkers.items[walker_i].node = adjacent.items[0][0];
-            walkers.items[walker_i].cost += adjacent.items[0][1];
-            walkers.items[walker_i].prev = walker.node;
-            try active_walkers.append(walker_i);
-            try seen.put(.{ walker_i, walker.node }, void{});
-        } else if (graph.nodes.items[walker.node] == Node.end) {
-            // std.debug.print("end\n", .{});
-            max = @max(max, walker.cost);
-        } else {
-            // Do nothing, this walker is lost
-        }
-    }
-    return max;
-}
-
-fn adjacent_nodes(graph: Graph, node: usize, ally: std.mem.Allocator) !std.ArrayList([2]usize) {
-    var adjacent = std.ArrayList([2]usize).init(ally);
+fn adjacent_nodes(graph: Graph, node: usize, ally: std.mem.Allocator) !std.ArrayList(Edge) {
+    var adjacent = List(Edge).init(ally);
     for (graph.edges.items) |edge| {
         if (edge.nodes[0] == node) {
-            try adjacent.append(.{ edge.nodes[1], edge.cost });
+            try adjacent.append(Edge{ node, edge.nodes[1], edge.cost });
         }
         if (edge.nodes[1] == node) {
-            try adjacent.append(.{ edge.nodes[0], edge.cost });
+            try adjacent.append(Edge{ node, edge.nodes[0], edge.cost });
         }
     }
     return adjacent;
 }
 
+fn contains(comptime T: type, items: []T, item: T) bool {
+    return index_of(T, items, item) != null;
+}
+
+fn index_of(comptime T: type, items: []T, item: T) ?usize {
+    for (items, 0..) |item_, i| {
+        if (item_.eql(item)) {
+            return i;
+        }
+    }
+    return null;
+}
+
 fn generate_graph(grid: []const u8, width: usize, ally: std.mem.Allocator) !Graph {
-    // Generate nodes
-    var nodes = std.HashMap(Node, void, Node, std.hash_map.default_max_load_percentage).initContext(ally, Node.start);
-    try nodes.put(Node.start, void{});
-    {
-        var walkers = std.ArrayList([2]u8).init(ally);
-        var seen = std.AutoHashMap([2]u8, void).init(ally);
+    var edges = List(Edge).init(ally);
+    var nodes = List(Node).init(ally);
+    try nodes.append(Node{ .x = 1, .y = 0 });
 
-        defer walkers.deinit();
-        defer seen.deinit();
+    var starts = List(struct { u8, u8, Dir, usize }).init(ally);
+    defer starts.deinit();
 
-        while (walkers.popOrNull()) |walker| {
-            if (seen.get(walker) == null) {
-                try seen.put(walker, void{});
-                var new_walkers = std.ArrayList(struct { u8, u8 }).init(ally);
-                new_walkers.deinit();
+    try starts.append(.{ 1, 0, Dir.down, 0 });
+    while (starts.popOrNull()) |start| {
+        var x, var y, const d, const start_node = start;
 
-                const x, const y = walker;
+        var next = List(Dir).init(ally);
+        defer next.deinit();
 
-                if (y > 0 and grid[x + (y - 1) * width] != '#') try new_walkers.append(.{ x, y - 1 });
-                if (y < width - 1 and grid[x + (y + 1) * width] != '#') try new_walkers.append(.{ x, y + 1 });
-                if (grid[x - 1 + y * width] != '#') try new_walkers.append(.{ x - 1, y });
-                if (grid[x + 1 + y * width] != '#') try new_walkers.append(.{ x + 1, y });
+        var steps: usize = 0;
 
-                // Remove seen
-                var i: usize = 0;
-                for (new_walkers.items) |new_walker| {
-                    if (seen.get(new_walker)) |_| {
-                        _ = new_walkers.orderedRemove(i);
-                    } else {
-                        i += 1;
+        // Walk until you find a node or the exit.
+        try next.append(d);
+        while (next.items.len == 1) : (steps += 1) {
+            // Move to the new location
+            const nd = next.items[0];
+            const nx, const ny = nd.move(x, y);
+            x = nx;
+            y = ny;
+
+            std.debug.print("({d}, {d}) {s}\n", .{ x, y, @tagName(nd) });
+            const graph = Graph{ .nodes = nodes, .edges = edges };
+            graph.print_grid(grid, width, .{ x, y, nd });
+            graph.print_edges();
+            _ = try std.io.getStdIn().reader().readByte();
+
+            next.clearAndFree();
+
+            // You've reached the end, stop.
+            if (x == width - 2 and y == grid.len / width - 1) {
+                try nodes.append(Node{ .x = x, .y = y });
+                try edges.append(Edge.new(start_node, nodes.items.len - 1, steps + 1));
+                break;
+            }
+
+            // Add all adjacent locations
+            for ([_]Dir{ Dir.up, Dir.down, Dir.left, Dir.right }) |d_| {
+                if (d_ != nd.opposite()) {
+                    const _x, const _y = d_.move(x, y);
+                    if (grid[_x + width * _y] != '#') {
+                        try next.append(d_);
                     }
-                }
-
-                if (new_walkers.items.len > 1) {
-                    try nodes.put(Node{ .middle = walker }, void{});
-                }
-
-                for (new_walkers.items) |new_walker| {
-                    try walkers.append(new_walker);
                 }
             }
         }
-        try nodes.put(Node.end, void{});
+
+        if (next.items.len > 1) {
+            const node = Node{ .x = x, .y = y };
+            if (index_of(Node, nodes.items, node)) |index| {
+                const edge = Edge.new(start_node, index, steps);
+                if (!contains(Edge, edges.items, edge)) {
+                    try edges.append(edge);
+                }
+            } else {
+                try nodes.append(node);
+                const node_i = nodes.items.len - 1;
+                const edge = Edge.new(start_node, node_i, steps);
+                if (!contains(Edge, edges.items, edge)) {
+                    try edges.append(edge);
+                }
+                for (next.items) |next_| {
+                    try starts.append(.{ x, y, next_, node_i });
+                }
+            }
+        }
     }
 
-    return Graph{ .nodes = nodes, .edges = undefined };
+    return Graph{ .nodes = nodes, .edges = edges };
 }
 
 // Return false if already in the list
@@ -144,15 +129,7 @@ fn append_if_not_already(comptime T: type, item: T, list: *std.ArrayList(T)) !bo
     return !has;
 }
 
-const Walker = struct {
-    x: u8,
-    y: u8,
-    d: Dir,
-    node: usize,
-    cost: usize,
-};
-
-const Dir = enum {
+const Dir = enum(u8) {
     up,
     down,
     left,
@@ -166,66 +143,84 @@ const Dir = enum {
             .right => .left,
         };
     }
+
+    fn move(self: @This(), x: u8, y: u8) struct { u8, u8 } {
+        return switch (self) {
+            .up => .{ x, y - 1 },
+            .down => .{ x, y + 1 },
+            .left => .{ x - 1, y },
+            .right => .{ x + 1, y },
+        };
+    }
+
+    fn as_char(self: @This()) u8 {
+        return switch (self) {
+            .up => '^',
+            .down => 'v',
+            .left => '<',
+            .right => '>',
+        };
+    }
 };
 
 const Graph = struct {
-    nodes: std.HashMap(Node, void, Node, std.hash_map.default_max_load_percentage),
-    edges: std.HashMap(Edge, void, Edge, std.hash_map.default_max_load_percentage),
+    nodes: List(Node),
+    edges: List(Edge),
 
-    fn print_nodes(self: @This()) void {
-        var it = self.nodes.keyIterator();
-        while (it.next()) |node| {
-            switch (node.*) {
-                .start => std.debug.print("start", .{}),
-                .end => std.debug.print("end", .{}),
-                .middle => |pos| std.debug.print("node({d},{d})", .{ pos[0], pos[0] }),
+    fn print_grid(self: @This(), grid: []const u8, width: usize, walker: ?struct { u8, u8, Dir }) void {
+        const height = grid.len / width;
+        for (0..height) |y_| {
+            for (0..width) |x_| {
+                const x: u8 = @intCast(x_);
+                const y: u8 = @intCast(y_);
+                if (index_of(Node, self.nodes.items, Node{ .x = x, .y = y })) |i| {
+                    std.debug.print("{X}", .{i});
+                } else if (walker != null and walker.?.@"0" == x and walker.?.@"1" == y) {
+                    std.debug.print("\x1b[31m{c}\x1b[0m", .{walker.?.@"2".as_char()});
+                } else {
+                    std.debug.print("{c}", .{grid[x + y * width]});
+                }
             }
-            std.debug.print("  ", .{});
+            std.debug.print("\n", .{});
+        }
+    }
+
+    fn print_edges(self: @This()) void {
+        for (self.edges.items) |edge| {
+            std.debug.print("{x} - {x} cost:{d}\n", .{ edge.node1, edge.node2, edge.cost });
         }
     }
 };
 
 const Edge = struct {
-    nodes: [2]usize,
+    node1: usize,
+    node2: usize,
     cost: usize,
 
-    pub fn hash(_: @This(), self: @This()) u64 {
-        var h = std.hash.Wyhash.init(0);
-        h.update(std.mem.asBytes(self.nodes[0]));
-        h.update(std.mem.asBytes(self.nodes[1]));
-        h.update(std.mem.asBytes(self.cost));
-        return h.final();
+    fn new(node1: usize, node2: usize, cost: usize) @This() {
+        // Make sure it's sorted so each edge has one canonical representation
+        std.debug.assert(cost > 0);
+        std.debug.assert(node1 != node2);
+        return @This(){
+            .node1 = @min(node1, node2),
+            .node2 = @max(node1, node2),
+            .cost = cost,
+        };
     }
 
-    pub fn eql(_: @This(), self: @This(), other: @This()) bool {
-        return std.mem.eql(usize, &self.nodes, &other.nodes) and self.cost == other.cost;
+    pub fn eql(self: @This(), other: @This()) bool {
+        std.debug.assert(self.node1 < self.node2);
+        std.debug.assert(other.node1 < other.node2);
+        return self.node1 == other.node1 and self.node2 == other.node2;
     }
 };
 
-const Node = union(enum) {
-    start,
-    middle: [2]u8,
-    end,
+const Node = struct {
+    x: u8,
+    y: u8,
 
-    pub fn hash(_: @This(), self: @This()) u64 {
-        var h = std.hash.Wyhash.init(0);
-        switch (self) {
-            .start => h.update("y"),
-            .end => h.update("x"),
-            .middle => {
-                h.update(std.mem.asBytes(self.middle[0]));
-                h.update(std.mem.asBytes(self.middle[1]));
-            },
-        }
-        return h.final();
-    }
-
-    pub fn eql(_: @This(), self: @This(), other: @This()) bool {
-        return switch (self) {
-            .start => other == Node.start,
-            .end => other == Node.end,
-            .middle => other == Node.middle and std.mem.eql(u8, &self.middle, &other.middle),
-        };
+    pub fn eql(self: @This(), other: @This()) bool {
+        return self.x == other.x and self.y == other.y;
     }
 };
 
