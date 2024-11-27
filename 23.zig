@@ -5,24 +5,71 @@ pub fn main() !void {
     const ally = std.heap.page_allocator;
     const grid, const width = try parse_grid(@embedFile("23.txt"), ally);
     const graph = try generate_graph(grid, width, ally);
-    graph.print_grid(grid, width, null);
-    graph.print_edges();
+    // graph.print_grid(grid, width, null);
+    // graph.print_edges();
+    const max = try most_scenic_walk_length_in_graph(graph, ally);
+    std.debug.print("Day 23 >> {d}\n", .{max});
 }
 
-// fn most_scenic_walk_length_in_graph(graph: Graph, ally: std.mem.Allocator) !usize {
-// }
+fn most_scenic_walk_length_in_graph(graph: Graph, ally: std.mem.Allocator) !usize {
+    const NodeId = usize;
+    const Cost = usize;
+    var starts = List(struct { List(NodeId), Cost }).init(ally);
+    var start_list = List(NodeId).init(ally);
+    try start_list.append(0);
+    try starts.append(.{ start_list, 0 });
 
-fn adjacent_nodes(graph: Graph, node: usize, ally: std.mem.Allocator) !std.ArrayList(Edge) {
-    var adjacent = List(Edge).init(ally);
-    for (graph.edges.items) |edge| {
-        if (edge.nodes[0] == node) {
-            try adjacent.append(Edge{ node, edge.nodes[1], edge.cost });
+    var max: usize = 0;
+
+    while (starts.popOrNull()) |start| {
+        const prev, const cost = start;
+        defer prev.deinit();
+        // std.debug.print("{any}, {d}\n", .{ prev.items, cost });
+        // _ = try std.io.getStdIn().reader().readByte();
+
+        // We are at the end
+        if (prev.getLast() == graph.nodes.items.len - 1) {
+            if (@max(max, cost) > max) {
+                std.debug.print("{d}\n", .{@max(max, cost)});
+            }
+            max = @max(max, cost);
         }
-        if (edge.nodes[1] == node) {
-            try adjacent.append(Edge{ node, edge.nodes[0], edge.cost });
+
+        var next = try next_nodes(graph, prev.items, ally);
+        defer next.deinit();
+        for (next.items) |next_| {
+            const node, const cost_ = next_;
+            var list = try prev.clone();
+            try list.append(node);
+            try starts.append(.{ list, cost + cost_ });
+        }
+    }
+
+    return max;
+}
+
+// Get all possible nodes to travel to
+fn next_nodes(graph: Graph, prev: []usize, ally: std.mem.Allocator) !List(struct { usize, usize }) {
+    var adjacent = List(struct { usize, usize }).init(ally);
+    const current = prev[prev.len - 1];
+    for (graph.edges.items) |edge| {
+        if (edge.node1 == current or edge.node2 == current) {
+            const adjacent_node_id = if (edge.node1 == current) edge.node2 else edge.node1;
+            if (!contains_usize(prev, adjacent_node_id)) {
+                try adjacent.append(.{ adjacent_node_id, edge.cost });
+            }
         }
     }
     return adjacent;
+}
+
+fn contains_usize(items: []usize, item: usize) bool {
+    for (items) |item_| {
+        if (item == item_) {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn contains(comptime T: type, items: []T, item: T) bool {
@@ -64,11 +111,11 @@ fn generate_graph(grid: []const u8, width: usize, ally: std.mem.Allocator) !Grap
             x = nx;
             y = ny;
 
-            std.debug.print("({d}, {d}) {s}\n", .{ x, y, @tagName(nd) });
-            const graph = Graph{ .nodes = nodes, .edges = edges };
-            graph.print_grid(grid, width, .{ x, y, nd });
-            graph.print_edges();
-            _ = try std.io.getStdIn().reader().readByte();
+            // std.debug.print("({d}, {d}) {s}\n", .{ x, y, @tagName(nd) });
+            // const graph = Graph{ .nodes = nodes, .edges = edges };
+            // graph.print_grid(grid, width, .{ x, y, nd });
+            // graph.print_edges();
+            // _ = try std.io.getStdIn().reader().readByte();
 
             next.clearAndFree();
 
