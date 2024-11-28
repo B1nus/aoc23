@@ -3,7 +3,7 @@ const std = @import("std");
 const lower = Ratio.new_int(200000000000000);
 const upper = Ratio.new_int(400000000000000);
 // const lower = Ratio.new_int(7);
-// const upper = Ratio.new_int(24);
+// const upper = Ratio.new_int(27);
 
 pub fn main() !void {
     var lines = std.mem.splitScalar(u8, @embedFile("24.txt"), '\n');
@@ -50,8 +50,10 @@ const Hail = struct {
         };
     }
 
-    fn format(self: @This()) ![]u8 {
-        return try std.fmt.allocPrint(std.heap.page_allocator, "({s},{s},{s}) ({s},{s},{s})", .{ self.x.format(), self.y.format(), self.z.format(), self.vx.format(), self.vy.format(), self.vz.format() });
+    fn format(self: @This()) []u8 {
+        return std.fmt.allocPrint(std.heap.page_allocator, "({s},{s},{s}) ({s},{s},{s})", .{ self.x.format(), self.y.format(), self.z.format(), self.vx.format(), self.vy.format(), self.vz.format() }) catch {
+            unreachable;
+        };
     }
 };
 
@@ -62,15 +64,22 @@ const Path = struct {
     max_x: Ratio,
     min_y: Ratio,
     max_y: Ratio,
+    hail: Hail, // For debugging purposes
 
     fn new(hail: Hail) @This() {
-        const max_time = if (hail.vz.le(Ratio.new_int(0))) hail.z.negated().div(hail.vz) else upper;
+        // if (hail.vz.le(Ratio.new_int(0))) hail.z.negated().div(hail.vz) else
+        const max_time = upper;
         // std.debug.print("{d}\n", .{max_time});
 
-        const min_x = max_time.mul(hail.vx).add(hail.x).clamp(lower, hail.x);
-        const max_x = max_time.mul(hail.vx).add(hail.x).clamp(hail.x, upper);
-        const min_y = max_time.mul(hail.vy).add(hail.y).clamp(lower, hail.y);
-        const max_y = max_time.mul(hail.vy).add(hail.y).clamp(hail.y, upper);
+        var min_x = max_time.mul(hail.vx).add(hail.x).min(hail.x);
+        var max_x = max_time.mul(hail.vx).add(hail.x).max(hail.x);
+        var min_y = max_time.mul(hail.vy).add(hail.y).min(hail.y);
+        var max_y = max_time.mul(hail.vy).add(hail.y).max(hail.y);
+
+        min_x = min_x.clamp(lower, upper);
+        max_x = max_x.clamp(lower, upper);
+        min_y = min_y.clamp(lower, upper);
+        max_y = max_y.clamp(lower, upper);
 
         // std.debug.print("{s}\n", .{hail.vy.format() catch {
         //     unreachable;
@@ -101,6 +110,7 @@ const Path = struct {
             .max_x = max_x,
             .min_y = min_y,
             .max_y = max_y,
+            .hail = hail,
         };
     }
 
@@ -122,6 +132,13 @@ const Path = struct {
     fn intersecting(self: Path, other: Path) bool {
         if (self.intersection(other)) |intersection_| {
             const x, const y = intersection_;
+            std.debug.print("\nchecking intersectio between: \n{s}\nand:\n{s}\n", .{ self.hail.format(), other.hail.format() });
+            std.debug.print("intersection: ({s},{s})\n", .{ x.format(), y.format() });
+            std.debug.print("self.range.x: ({s},{s})\n", .{ self.min_x.format(), self.max_x.format() });
+            std.debug.print("other.range.x: ({s},{s})\n", .{ other.min_x.format(), other.max_x.format() });
+            std.debug.print("self.range.y: ({s},{s})\n", .{ self.min_y.format(), self.max_y.format() });
+            std.debug.print("other.range.y: ({s},{s})\n", .{ other.min_y.format(), other.max_y.format() });
+
             return x.in_range(self.min_x, self.max_x) and x.in_range(other.min_x, other.max_x) and y.in_range(self.min_y, self.max_y) and y.in_range(other.min_y, other.max_y);
         } else {
             return false;
@@ -223,9 +240,9 @@ const Ratio = struct {
         return @This().new(self.a, self.b, !self.neg);
     }
 
-    fn in_range(self: @This(), min: @This(), max: @This()) bool {
-        std.debug.print("{s} is in ({s})..({s}) == {}\n", .{ self.format(), min.format(), max.format(), self.le_eql(max) and self.gt_eql(min) });
-        return self.le_eql(max) and self.gt_eql(min);
+    fn in_range(self: @This(), min_: @This(), max_: @This()) bool {
+        // std.debug.print("{s} is in ({s})..({s}) == {}\n", .{ self.format(), min.format(), max.format(), self.le_eql(max) and self.gt_eql(min) });
+        return self.le_eql(max_) and self.gt_eql(min_);
     }
 
     // Equal
@@ -257,16 +274,36 @@ const Ratio = struct {
         return gt(self, other) or eql(self, other);
     }
 
-    fn clamp(self: @This(), min: @This(), max: @This()) @This() {
-        if (self.le(min)) {
-            return min;
+    fn clamp(self: @This(), min_: @This(), max_: @This()) @This() {
+        std.debug.print("{s} clamped between ({s})..({s})", .{ self.format(), min_.format(), max_.format() });
+        if (self.le(min_)) {
+            std.debug.print(" is {s}\n", .{min_.format()});
+            return min_;
         }
 
-        if (self.gt(max)) {
-            return max;
+        if (self.gt(max_)) {
+            std.debug.print(" is {s}\n", .{max_.format()});
+            return max_;
         }
 
+        std.debug.print(" is {s}\n", .{self.format()});
         return self;
+    }
+
+    fn max(self: @This(), other: @This()) @This() {
+        if (self.gt(other)) {
+            return self;
+        } else {
+            return other;
+        }
+    }
+
+    fn min(self: @This(), other: @This()) @This() {
+        if (self.le(other)) {
+            return self;
+        } else {
+            return other;
+        }
     }
 
     // Parse an integer
