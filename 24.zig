@@ -1,9 +1,9 @@
 const std = @import("std");
 
-// const lower = Ratio.new_int(200000000000000);
-// const upper= Ratio.new_int(400000000000000);
-const lower = Ratio.new_int(7);
-const upper = Ratio.new_int(24);
+const lower = Ratio.new_int(200000000000000);
+const upper = Ratio.new_int(400000000000000);
+// const lower = Ratio.new_int(7);
+// const upper = Ratio.new_int(24);
 
 pub fn main() !void {
     var lines = std.mem.splitScalar(u8, @embedFile("24.txt"), '\n');
@@ -13,14 +13,13 @@ pub fn main() !void {
         const hail = try Hail.new(line);
         const path = Path.new(hail);
         try paths.append(path);
-        std.debug.print("{s} {s}\n", .{ try hail.format(), try path.format() });
+        // std.debug.print("{s} {s}\n", .{ try hail.format(), try path.format() });
     }
 
     var count: usize = 0;
     for (paths.items[1..], 1..) |path1, i| {
         for (paths.items[0..i]) |path2| {
-            if (path1.intersection(path2)) |intersection_| {
-                std.debug.print("{s}x + {s} = {s}x + {s}, x={s} y={s}\n", .{ try path1.k.format(), try path1.m.format(), try path2.k.format(), try path2.m.format(), try intersection_.@"0".format(), try intersection_.@"1".format() });
+            if (path1.intersecting(path2)) {
                 count += 1;
             }
         }
@@ -52,7 +51,7 @@ const Hail = struct {
     }
 
     fn format(self: @This()) ![]u8 {
-        return try std.fmt.allocPrint(std.heap.page_allocator, "({s},{s},{s}) ({s},{s},{s})", .{ try self.x.format(), try self.y.format(), try self.z.format(), try self.vx.format(), try self.vy.format(), try self.vz.format() });
+        return try std.fmt.allocPrint(std.heap.page_allocator, "({s},{s},{s}) ({s},{s},{s})", .{ self.x.format(), self.y.format(), self.z.format(), self.vx.format(), self.vy.format(), self.vz.format() });
     }
 };
 
@@ -110,14 +109,8 @@ const Path = struct {
         if (self.k.eql(other.k)) {
             return null;
         } else {
-            std.debug.print("{s}\n", .{self.m.format() catch {
-                unreachable;
-            }});
-            std.debug.print("- {s} = {s}\n", .{ other.m.format() catch {
-                unreachable;
-            }, self.m.sub(other.m).format() catch {
-                unreachable;
-            } });
+            // std.debug.print("{s}\n", .{self.m.format()});
+            // std.debug.print("- {s} = {s}\n", .{ other.m.format(), self.m.sub(other.m).format() });
 
             const x = self.m.sub(other.m).div(other.k.sub(self.k));
             const y = self.k.mul(x).add(self.m);
@@ -127,9 +120,8 @@ const Path = struct {
     }
 
     fn intersecting(self: Path, other: Path) bool {
-        if (self.intersecting(other)) |intersection_| {
+        if (self.intersection(other)) |intersection_| {
             const x, const y = intersection_;
-            // std.debug.print("({d}, {d})", .{ x, y });
             return x.in_range(self.min_x, self.max_x) and x.in_range(other.min_x, other.max_x) and y.in_range(self.min_y, self.max_y) and y.in_range(other.min_y, other.max_y);
         } else {
             return false;
@@ -137,7 +129,7 @@ const Path = struct {
     }
 
     fn format(self: Path) ![]u8 {
-        return try std.fmt.allocPrint(std.heap.page_allocator, "y = ({s})x + {s}", .{ try self.k.format(), try self.m.format() });
+        return try std.fmt.allocPrint(std.heap.page_allocator, "y = ({s})x + {s}", .{ self.k.format(), self.m.format() });
     }
 };
 
@@ -232,6 +224,7 @@ const Ratio = struct {
     }
 
     fn in_range(self: @This(), min: @This(), max: @This()) bool {
+        std.debug.print("{s} is in ({s})..({s}) == {}\n", .{ self.format(), min.format(), max.format(), self.le_eql(max) and self.gt_eql(min) });
         return self.le_eql(max) and self.gt_eql(min);
     }
 
@@ -283,16 +276,28 @@ const Ratio = struct {
         return @This().new(int, 1, neg);
     }
 
-    fn format(self: @This()) ![]u8 {
+    fn format(self: @This()) []u8 {
         const ally = std.heap.page_allocator;
         var fmt = std.ArrayList(u8).init(ally);
         if (self.neg) {
-            try fmt.appendSlice(try std.fmt.allocPrint(ally, "-", .{}));
+            fmt.appendSlice(std.fmt.allocPrint(ally, "-", .{}) catch {
+                unreachable;
+            }) catch {
+                unreachable;
+            };
         }
         if (self.b != 1) {
-            try fmt.appendSlice(try std.fmt.allocPrint(ally, "{d}/{d}", .{ self.a, self.b }));
+            fmt.appendSlice(std.fmt.allocPrint(ally, "{d}/{d}", .{ self.a, self.b }) catch {
+                unreachable;
+            }) catch {
+                unreachable;
+            };
         } else {
-            try fmt.appendSlice(try std.fmt.allocPrint(ally, "{d}", .{self.a}));
+            fmt.appendSlice(std.fmt.allocPrint(ally, "{d}", .{self.a}) catch {
+                unreachable;
+            }) catch {
+                unreachable;
+            };
         }
         return fmt.items;
     }
