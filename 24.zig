@@ -1,10 +1,9 @@
 // I cheated again, I'm sorry. I tried my very best. Thank you @HyperNeutrino.
+//
+// For part 2 I found a video by @Werner Altewischer on youtube. Great insight,
+// thanks!
 const std = @import("std");
-
-const lower = 200000000000000;
-const upper = 400000000000000;
-// const lower = 7;
-// const upper = 27;
+const range = 400;
 
 pub fn main() !void {
     var lines = std.mem.splitScalar(u8, @embedFile("24.txt"), '\n');
@@ -14,65 +13,146 @@ pub fn main() !void {
         try paths.append(try Path.new(line));
     }
 
-    var count: usize = 0;
-    for (paths.items[1..], 1..) |other, other_i| {
-        for (paths.items[0..other_i]) |self| {
-            // self.print("{s} and ");
-            // other.print("{s}\n");
-            if (self.a * other.b == other.a * self.b) {
-                // std.debug.print("paralell\n", .{});
-                continue;
-            } else {
-                const x, const y = self.intersection(other);
-                if (self.in_future(x, y) and other.in_future(x, y) and x <= upper and x >= lower and y <= upper and y >= lower) {
-                    count += 1;
-                    // std.debug.print("YUPP ", .{});
+    // Basically, you can say that the stone is stationary and just subtract every hailstone velocity instead.
+    //
+    // So, we do that for the xy axis by checking every velocity from -1000 to 1000 in x and y and check
+    // if all hailstones collide and if so, if the collide at the same x and y position.
+    //
+    // This is all from the video by @Werner Altewischer.
+    var vx: i128 = @intCast(range);
+    var vy: i128 = undefined;
+    var vz: i128 = undefined;
+    for (0..range * 2) |_| {
+        vy = @intCast(range);
+        for (0..range * 2) |_| {
+            vz = @intCast(range);
+            for (0..range * 2) |_| {
+                if (try_velocity(paths.items, vx, vy, vz)) |pos| {
+                    std.debug.print("Day 24 >> {d}\n", .{pos[0] + pos[1] + pos[2]});
+                    std.process.exit(0);
                 }
-                // std.debug.print("x={d} y={d}\n", .{ x, y });
+                vz -= 1;
+            }
+            vy -= 1;
+        }
+        vx -= 1;
+    }
+}
+
+fn try_velocity(paths: []Path, vx: i128, vy: i128, vz: i128) ?[3]i128 {
+    var pos: ?[3]i128 = null;
+    for (paths[1..], 1..) |other, other_i| {
+        for (paths[0..other_i]) |self| {
+            if (self.intersection(other, vx, vy, vz)) |intersection| {
+                if (pos) |p| {
+                    if (!std.mem.eql(i128, &intersection, &p)) {
+                        return null;
+                    }
+                } else {
+                    pos = intersection;
+                }
+            } else {
+                return null;
             }
         }
     }
+    return pos.?;
+}
 
-    std.debug.print("{d}\n", .{count});
+fn eql(a: ?[2]i128, b: ?[2]i128) bool {
+    if (a) |a_| {
+        if (b) |b_| {
+            return a_[0] == b_[0] and a_[1] == b_[1];
+        } else {
+            return true;
+        }
+    } else {
+        return true;
+    }
 }
 
 const Path = struct {
-    a: f80,
-    b: f80,
-    c: f80,
-    sx: f80,
-    sy: f80,
-    vx: f80,
-    vy: f80,
+    sx: i128,
+    sy: i128,
+    sz: i128,
+    vx: i128,
+    vy: i128,
+    vz: i128,
 
     fn new(line: []const u8) !@This() {
         var parts = std.mem.splitScalar(u8, line, '@');
         var pos_parts = std.mem.splitScalar(u8, parts.next().?, ',');
         var vel_parts = std.mem.splitScalar(u8, parts.next().?, ',');
 
-        const sx = try std.fmt.parseFloat(f80, std.mem.trim(u8, pos_parts.next().?, " "));
-        const sy = try std.fmt.parseFloat(f80, std.mem.trim(u8, pos_parts.next().?, " "));
-        // const z = try std.fmt.parseFloat(f80, std.mem.trim(u8, pos_parts.next().?, " "));
-        const vx = try std.fmt.parseFloat(f80, std.mem.trim(u8, vel_parts.next().?, " "));
-        const vy = try std.fmt.parseFloat(f80, std.mem.trim(u8, vel_parts.next().?, " "));
-        // const vz = try std.fmt.parseFloat(f80, std.mem.trim(u8, val_parts.next().?, " "));
+        const sx = try std.fmt.parseInt(i128, std.mem.trim(u8, pos_parts.next().?, " "), 10);
+        const sy = try std.fmt.parseInt(i128, std.mem.trim(u8, pos_parts.next().?, " "), 10);
+        const sz = try std.fmt.parseInt(i128, std.mem.trim(u8, pos_parts.next().?, " "), 10);
+        const vx = try std.fmt.parseInt(i128, std.mem.trim(u8, vel_parts.next().?, " "), 10);
+        const vy = try std.fmt.parseInt(i128, std.mem.trim(u8, vel_parts.next().?, " "), 10);
+        const vz = try std.fmt.parseInt(i128, std.mem.trim(u8, vel_parts.next().?, " "), 10);
 
-        return @This(){ .a = vy, .b = -vx, .c = vy * sx - vx * sy, .sx = sx, .sy = sy, .vx = vx, .vy = vy };
+        return @This(){ .sx = sx, .sy = sy, .sz = sz, .vx = vx, .vy = vy, .vz = vz };
     }
 
-    // I assume they are not paralell
-    fn intersection(self: @This(), other: @This()) [2]f80 {
-        const div = self.a * other.b - other.a * self.b;
-        return .{ (self.c * other.b - other.c * self.b) / div, (other.c * self.a - self.c * other.a) / div };
+    fn intersection(self: @This(), other: @This(), vx: i128, vy: i128, vz: i128) ?[3]i128 {
+        var x, var y, var z = [_]?i128{null} ** 3;
+
+        const self_vx = self.vx - vx;
+        const self_vy = self.vy - vy;
+        const self_vz = self.vz - vz;
+
+        const other_vx = other.vx - vx;
+        const other_vy = other.vy - vy;
+        const other_vz = other.vz - vz;
+
+        const xy = projected_intersection(self.sx, self_vx, self.sy, self_vy, other.sx, other_vx, other.sy, other_vy);
+        const yz = projected_intersection(self.sy, self_vy, self.sz, self_vz, other.sy, other_vy, other.sz, other_vz);
+        const zx = projected_intersection(self.sz, self_vz, self.sx, self_vx, other.sz, other_vz, other.sx, other_vx);
+
+        if (xy) |xy_| x, y = xy_;
+        if (yz) |yz_| y, z = yz_;
+        if (zx) |zx_| z, x = zx_;
+
+        if (x != null and y != null and z != null) {
+            return .{ x.?, y.?, z.? };
+        } else {
+            return null;
+        }
     }
 
-    fn in_future(self: @This(), x: f80, y: f80) bool {
-        return (x - self.sx < 0) == (self.vx < 0) and (y - self.sy < 0) == (self.vy < 0);
+    fn projected_intersection(x1: i128, vx1: i128, y1: i128, vy1: i128, x2: i128, vx2: i128, y2: i128, vy2: i128) ?[2]i128 {
+        if (vy1 * vx2 == vy2 * vx1) {
+            return null;
+        } else {
+            const a1 = vy1;
+            const b1 = -vx1;
+            const c1 = vy1 * x1 - vx1 * y1;
+
+            const a2 = vy2;
+            const b2 = -vx2;
+            const c2 = vy2 * x2 - vx2 * y2;
+
+            const div = a1 * b2 - a2 * b1;
+
+            // They are paralell if div is zero, don't proceed.
+            if (div != 0) {
+                const x_top = c1 * b2 - c2 * b1;
+                const y_top = c2 * a1 - c1 * a2;
+                const x = std.math.divExact(i128, x_top, div) catch {
+                    return null;
+                };
+                const y = std.math.divExact(i128, y_top, div) catch {
+                    return null;
+                };
+                return .{ x, y };
+            }
+
+            // Either div was zero of x or y was not integers. Either way, return null for no intersection.
+            return null;
+        }
     }
 
-    fn print(self: @This(), comptime fmt: []const u8) void {
-        std.debug.print(fmt, .{std.fmt.allocPrint(std.heap.page_allocator, "{d}x+{d}={d}", .{ self.a, self.b, self.c }) catch {
-            unreachable;
-        }});
+    fn in_future(self: @This(), x: i128, y: i128, z: i128, vx: i128, vy: i128, vz: i128) bool {
+        return (x - self.sx < 0) == (self.vx - vx < 0) and (y - self.sy < 0) == (self.vy - vy < 0) and (z - self.sz) == (self.vz - vz < 0);
     }
 };
